@@ -760,9 +760,8 @@ class _SettingsScreenState extends State<SettingsScreen>
             ],
           ),
 
-          // 4b. Voice Assistant background listening (Phase 5a shell — no
-          // wake-word engine wired in yet, this only proves the foreground
-          // service starts/stops/survives backgrounding).
+          // 4b. Voice Assistant background listening — sherpa-onnx wake-word
+          // detection for the 5 supported names (Phase 5b).
           _buildSettingsCard(
             icon: Icons.mic_none_outlined,
             title: 'Voice Assistant (Beta)',
@@ -772,13 +771,27 @@ class _SettingsScreenState extends State<SettingsScreen>
               SwitchListTile(
                 title: const Text('Background listening'),
                 subtitle: const Text(
-                  'Keeps an ongoing notification while active. Wake-word '
-                  'detection is not implemented yet — this only tests the '
-                  'background service.',
+                  'Keeps an ongoing notification while active. Say "Hey '
+                  '[name]" to start a voice command hands-free — only works '
+                  'if your assistant name is Aigentik, Nova, Codey, Juno, '
+                  'or Milo.',
                 ),
                 value: _voiceAssistantListening,
                 onChanged: (bool value) async {
                   if (value) {
+                    final status = await Permission.microphone.request();
+                    if (!status.isGranted) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Microphone permission is required for '
+                            'background listening.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
                     await VoiceAssistantForegroundService.start();
                   } else {
                     await VoiceAssistantForegroundService.stop();

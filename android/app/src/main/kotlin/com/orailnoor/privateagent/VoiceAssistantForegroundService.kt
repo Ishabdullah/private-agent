@@ -81,26 +81,54 @@ class VoiceAssistantForegroundService : Service() {
             ACTION_STOP -> {
                 stopSpotting()
                 stopSelf()
-                return START_NOT_STICKY
             }
             else -> startListening()
         }
-        return START_STICKY
+        // Deliberately NOT START_STICKY: if this crashes or fails to start
+        // (e.g. RECORD_AUDIO revoked after the toggle was enabled), letting
+        // Android auto-restart it would immediately hit the same failure
+        // again, forever — a crash loop that can make the whole app appear
+        // to "not open." Dart explicitly calls start()/resumeListening()
+        // whenever it actually wants the service running, so nothing here
+        // needs OS-level restart-on-kill.
+        return START_NOT_STICKY
     }
 
     private fun startListening() {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.RECORD_AUDIO,
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            android.util.Log.e(
+                "VoiceAssistant",
+                "RECORD_AUDIO not granted, refusing to start foreground service",
             )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+            stopSelf()
+            return
         }
-        isRunning = true
-        startSpotting()
+
+        try {
+            val notification = buildNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            isRunning = true
+            startSpotting()
+        } catch (e: Throwable) {
+            // Throwable, not Exception: a missing/mismatched native library
+            // for this device's ABI throws UnsatisfiedLinkError (an Error,
+            // not an Exception) the first time KeywordSpotter is touched —
+            // must be caught here too or it crashes the whole process.
+            android.util.Log.e("VoiceAssistant", "Failed to start foreground service", e)
+            stopSelf()
+        }
     }
 
     /** Looks up the configured wake phrase from Dart's `WakeWordConfig`,
@@ -160,7 +188,7 @@ class VoiceAssistantForegroundService : Service() {
             isSpotting = true
 
             recordingThread = thread(start = true) { processSamples(name) }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             android.util.Log.e("VoiceAssistant", "Failed to start KWS loop", e)
             stopSpotting()
         }
@@ -191,20 +219,25 @@ class VoiceAssistantForegroundService : Service() {
         val spotter = kws ?: return
         val activeStream = stream ?: return
 
-        while (isSpotting) {
-            val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
-            if (read > 0) {
-                val samples = FloatArray(read) { buffer[it] / 32768.0f }
-                activeStream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
-                while (spotter.isReady(activeStream)) {
-                    spotter.decode(activeStream)
-                    val result = spotter.getResult(activeStream)
-                    if (result.keyword.isNotBlank()) {
-                        spotter.reset(activeStream)
-                        onWakeWordDetected(configuredName)
+        try {
+            while (isSpotting) {
+                val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
+                if (read > 0) {
+                    val samples = FloatArray(read) { buffer[it] / 32768.0f }
+                    activeStream.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
+                    while (spotter.isReady(activeStream)) {
+                        spotter.decode(activeStream)
+                        val result = spotter.getResult(activeStream)
+                        if (result.keyword.isNotBlank()) {
+                            spotter.reset(activeStream)
+                            onWakeWordDetected(configuredName)
+                        }
                     }
                 }
             }
+        } catch (e: Throwable) {
+            android.util.Log.e("VoiceAssistant", "KWS decode loop failed", e)
+            isSpotting = false
         }
     }
 
