@@ -199,9 +199,9 @@ class VoiceAssistantForegroundService : Service() {
             featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
             modelConfig = OnlineModelConfig(
                 transducer = OnlineTransducerModelConfig(
-                    encoder = "$ASSETS_DIR/encoder.int8.onnx",
+                    encoder = "$ASSETS_DIR/encoder.onnx",
                     decoder = "$ASSETS_DIR/decoder.onnx",
-                    joiner = "$ASSETS_DIR/joiner.int8.onnx",
+                    joiner = "$ASSETS_DIR/joiner.onnx",
                 ),
                 tokens = "$ASSETS_DIR/tokens.txt",
                 modelType = "zipformer2",
