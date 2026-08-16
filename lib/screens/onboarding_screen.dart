@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'dart:ui';
 import '../config/feature_flags.dart';
+import '../models/wake_word_config.dart';
 import '../services/ai_service.dart';
 import '../services/screen_automation_service.dart';
+import '../services/voice_service.dart';
+import '../services/wake_word_settings_service.dart';
 import 'home_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -21,6 +25,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   final ScreenAutomationService _screenAutomationService =
       ScreenAutomationService();
   final AiService _aiService = AiService();
+  final VoiceService _voiceService = VoiceService();
+  final WakeWordSettingsService _wakeWordSettingsService =
+      WakeWordSettingsService();
+
+  static const _stepLabels = [
+    'Welcome',
+    'Assistant',
+    'Permissions',
+    'AI Setup',
+    'Voice Test',
+    'Ready',
+  ];
 
   int _currentStep = 0;
   bool _isAccessibilityGranted = false;
@@ -30,6 +46,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _isPhoneGranted = false;
   bool _isSmsGranted = false;
   bool _isOverlayGranted = false;
+  bool _isBatteryUnrestricted = false;
+
+  // Assistant Identity state
+  final TextEditingController _assistantNameController =
+      TextEditingController();
+  bool _isTestingWakeWord = false;
+  bool? _wakeWordTestPassed;
+  String? _wakeWordTestHeard;
+
+  // Voice Test state
+  bool _isRunningVoiceTest = false;
+  bool? _voiceTestPassed;
+  String? _voiceTestHeard;
 
   // AI config states
   String _selectedProvider = 'deepseek';
@@ -49,7 +78,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadAiDefaults();
+    _loadWakeWordDefaults();
     _checkPermissions();
+    _voiceService.init();
   }
 
   Future<void> _loadAiDefaults() async {
@@ -63,6 +94,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     });
   }
 
+  Future<void> _loadWakeWordDefaults() async {
+    final config = await _wakeWordSettingsService.loadConfig();
+    if (!mounted || config == null) return;
+    setState(() {
+      _assistantNameController.text = config.assistantName;
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -70,6 +109,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _apiKeyController.dispose();
     _baseUrlController.dispose();
     _modelController.dispose();
+    _assistantNameController.dispose();
+    _voiceService.dispose();
     super.dispose();
   }
 
@@ -88,6 +129,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final contactsStatus = await Permission.contacts.status;
     final phoneStatus = await Permission.phone.status;
     final smsStatus = await Permission.sms.status;
+    final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
     final overlayGranted = FeatureFlags.floatingOverlayEnabled
         ? await FlutterOverlayWindow.isPermissionGranted()
         : false;
@@ -100,6 +142,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _isContactsGranted = contactsStatus.isGranted;
         _isPhoneGranted = phoneStatus.isGranted;
         _isSmsGranted = smsStatus.isGranted;
+        _isBatteryUnrestricted = batteryStatus.isGranted;
         _isOverlayGranted = overlayGranted;
       });
     }
@@ -179,7 +222,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     });
   }
 
-  Future<void> _testAndSave() async {
+  /// Validates + saves the AI provider config and advances to the next
+  /// onboarding step. Does NOT mark onboarding complete or navigate away —
+  /// that now happens on the Readiness page's "Finish Setup" action, since
+  /// Voice Test and Readiness come after AI Setup in the revised flow.
+  Future<void> _validateAiConfig() async {
     setState(() {
       _isValidating = true;
       _validationError = null;
@@ -217,30 +264,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           baseUrl: baseUrl,
           model: model,
         );
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('onboarding_completed', true);
 
         if (mounted) {
           setState(() {
             _isValidating = false;
           });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text(
-                'Configuration validated! Launching PrivateAgent...',
-              ),
-              backgroundColor: Colors.indigoAccent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          );
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          _pageController.nextPage(
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
           );
         }
       } else {
@@ -256,6 +287,120 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             'Error: ${e.toString().replaceFirst('Exception: ', '')}';
         _isValidating = false;
       });
+    }
+  }
+
+  /// The actual "finish onboarding" action, now on the Readiness page.
+  Future<void> _finishSetup() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_completed', true);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('All set! Launching PrivateAgent...'),
+        backgroundColor: Colors.indigoAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
+  }
+
+  /// Persists the assistant name/wake phrase immediately on selection, per
+  /// the plan's requirement that backgrounding mid-onboarding doesn't lose
+  /// the choice. Tier/engine are fixed to the Phase 3 Vosk-only decision.
+  Future<void> _saveWakeWordChoice(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final existing = _wakeWordSettingsService.config;
+    await _wakeWordSettingsService.saveConfig(
+      WakeWordConfig(
+        assistantName: trimmed,
+        wakePhrase: 'Hey $trimmed',
+        tier: _wakeWordSettingsService.tierForName(trimmed),
+        engine: WakeWordSettingsService.defaultEngine,
+        enabled: true,
+        sensitivity: existing?.sensitivity ?? 0.5,
+        createdAt: existing?.createdAt ?? DateTime.now(),
+      ),
+    );
+  }
+
+  /// Captures a single utterance via the existing push-to-talk `VoiceService`
+  /// with a safety timeout — `VoiceService` doesn't surface mic/init
+  /// failures as a callback, so without this a denied mic would hang the
+  /// test forever (same hazard `VoiceConversationController` solves).
+  Future<String?> _captureUtterance({
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    final completer = Completer<String?>();
+    try {
+      await _voiceService.startListening(
+        onResult: (text) {
+          if (!completer.isCompleted) completer.complete(text);
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete(null);
+        },
+      );
+    } catch (_) {
+      if (!completer.isCompleted) completer.complete(null);
+    }
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () async {
+        await _voiceService.stopListening();
+        return null;
+      },
+    );
+  }
+
+  Future<void> _runWakeWordTest() async {
+    final phrase = _assistantNameController.text.trim();
+    if (phrase.isEmpty) return;
+    setState(() {
+      _isTestingWakeWord = true;
+      _wakeWordTestPassed = null;
+      _wakeWordTestHeard = null;
+    });
+
+    final heard = await _captureUtterance();
+    final passed =
+        heard != null &&
+        heard.toLowerCase().contains(phrase.toLowerCase());
+
+    if (!mounted) return;
+    setState(() {
+      _isTestingWakeWord = false;
+      _wakeWordTestHeard = heard;
+      _wakeWordTestPassed = passed;
+    });
+  }
+
+  Future<void> _runVoiceTest() async {
+    setState(() {
+      _isRunningVoiceTest = true;
+      _voiceTestPassed = null;
+      _voiceTestHeard = null;
+    });
+
+    final heard = await _captureUtterance();
+    if (!mounted) return;
+
+    setState(() {
+      _isRunningVoiceTest = false;
+      _voiceTestHeard = heard;
+      _voiceTestPassed = heard != null && heard.trim().isNotEmpty;
+    });
+
+    if (_voiceTestPassed == true && heard != null) {
+      await _voiceService.speak('You said: $heard');
     }
   }
 
@@ -393,10 +538,24 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
-  bool get _canProceedToModel {
+  bool get _canProceedFromPermissions {
     return _isAccessibilityGranted &&
         _isMicrophoneGranted &&
+        _isNotificationsGranted &&
         (!FeatureFlags.floatingOverlayEnabled || _isOverlayGranted);
+  }
+
+  /// Gate for the final "Finish Setup" action on the Readiness page.
+  /// Battery-optimization exemption and wake-word setup are shown there as
+  /// advisory (⚠️) rather than blocking — Android may not let the app force
+  /// the battery exemption, and no wake-word engine exists yet (Phase 5),
+  /// so requiring it would trap users in onboarding for an inert feature.
+  bool get _canFinishSetup {
+    return _isAccessibilityGranted &&
+        _isMicrophoneGranted &&
+        _isNotificationsGranted &&
+        (!FeatureFlags.floatingOverlayEnabled || _isOverlayGranted) &&
+        _aiService.isConfigured;
   }
 
   @override
@@ -445,8 +604,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     },
                     children: [
                       _buildWelcomePage(isDark),
+                      _buildAssistantIdentityPage(isDark),
                       _buildPermissionsPage(isDark),
                       _buildModelSetupPage(isDark),
+                      _buildVoiceTestPage(isDark),
+                      _buildReadinessPage(isDark),
                     ],
                   ),
                 ),
@@ -510,74 +672,62 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   Widget _buildAnimatedStepper(bool isDark) {
+    // Six steps don't fit as fixed-width segments the way three did, so this
+    // uses Expanded segments (scales to any step count) plus a single
+    // "Step X of Y: Label" line instead of six individually-labeled segments.
     return Column(
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(3, (index) {
+          children: List.generate(_stepLabels.length, (index) {
             final isActive = _currentStep == index;
             final isCompleted = _currentStep > index;
 
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 400),
-              curve: Curves.easeOutCubic,
-              height: 6,
-              width: isActive
-                  ? MediaQuery.of(context).size.width * 0.35
-                  : MediaQuery.of(context).size.width * 0.22,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: isActive
-                    ? Theme.of(context).primaryColor
-                    : isCompleted
-                    ? Theme.of(context).primaryColor.withOpacity(0.5)
-                    : (isDark
-                          ? const Color(0xFF1E293B)
-                          : const Color(0xFFE2E8F0)),
-                boxShadow: isActive
-                    ? [
-                        BoxShadow(
-                          color: Theme.of(
-                            context,
-                          ).primaryColor.withOpacity(0.25),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ]
-                    : null,
+            return Expanded(
+              child: Container(
+                margin: EdgeInsets.only(
+                  right: index == _stepLabels.length - 1 ? 0 : 4,
+                ),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: isActive
+                        ? Theme.of(context).primaryColor
+                        : isCompleted
+                        ? Theme.of(context).primaryColor.withOpacity(0.5)
+                        : (isDark
+                              ? const Color(0xFF1E293B)
+                              : const Color(0xFFE2E8F0)),
+                    boxShadow: isActive
+                        ? [
+                            BoxShadow(
+                              color: Theme.of(
+                                context,
+                              ).primaryColor.withOpacity(0.25),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
               ),
             );
           }),
         ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _buildStepperLabel(0, 'Welcome'),
-            _buildStepperLabel(1, 'Permissions'),
-            _buildStepperLabel(2, 'AI Setup'),
-          ],
+        const SizedBox(height: 10),
+        Text(
+          'Step ${_currentStep + 1} of ${_stepLabels.length}: '
+          '${_stepLabels[_currentStep]}',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Theme.of(context).primaryColor,
+          ),
         ),
       ],
-    );
-  }
-
-  Widget _buildStepperLabel(int index, String text) {
-    final isActive = _currentStep == index;
-    final isCompleted = _currentStep > index;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: 12,
-        fontWeight: isActive ? FontWeight.bold : FontWeight.w600,
-        color: isActive
-            ? Theme.of(context).primaryColor
-            : isCompleted
-            ? (isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569))
-            : (isDark ? const Color(0xFF475569) : const Color(0xFF94A3B8)),
-      ),
     );
   }
 
@@ -778,6 +928,586 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  // --- STEP: ASSISTANT IDENTITY (wake word / assistant name) ---
+  Widget _buildAssistantIdentityPage(bool isDark) {
+    final name = _assistantNameController.text.trim();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          const Text(
+            'What should I call myself?',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Pick a name for your assistant — type anything you like. Wake-word '
+            'detection runs fully offline, but uses more battery than a '
+            'dedicated wake-word chip would; you can always fall back to the '
+            'mic button.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 90,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              children: [
+                for (final preset in WakeWordSettingsService.presetNames) ...[
+                  _buildAssistantNamePresetCard(preset, isDark),
+                  const SizedBox(width: 10),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          _buildFormTextField(
+            controller: _assistantNameController,
+            label: 'Or type your own',
+            hint: 'e.g. Copper',
+            isDark: isDark,
+          ),
+          const SizedBox(height: 16),
+          if (name.isNotEmpty)
+            Text(
+              'Wake phrase: "Hey $name"',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white70 : Colors.black87,
+              ),
+            ),
+          const SizedBox(height: 20),
+          OutlinedButton.icon(
+            onPressed: (name.isEmpty || _isTestingWakeWord)
+                ? null
+                : () async {
+                    await _saveWakeWordChoice(name);
+                    await _runWakeWordTest();
+                  },
+            icon: _isTestingWakeWord
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  )
+                : const Icon(Icons.mic_rounded, size: 18),
+            label: Text(
+              _isTestingWakeWord ? 'Listening for "$name"...' : 'Test it',
+            ),
+          ),
+          if (_wakeWordTestPassed != null) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  _wakeWordTestPassed!
+                      ? Icons.check_circle_rounded
+                      : Icons.error_outline_rounded,
+                  color: _wakeWordTestPassed! ? Colors.green : Colors.orange,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _wakeWordTestPassed!
+                        ? 'Mic heard: "${_wakeWordTestHeard ?? ''}" — this checks your mic hears the phrase. Always-on background detection arrives once background listening ships.'
+                        : _wakeWordTestHeard == null
+                        ? "Didn't catch anything — try again closer to the mic."
+                        : 'Heard "$_wakeWordTestHeard", not "$name" — try again.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const Spacer(),
+          Row(
+            children: [
+              TextButton(
+                onPressed: () {
+                  _pageController.previousPage(
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeOutCubic,
+                  );
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: isDark
+                      ? Colors.white
+                      : const Color(0xFF475569),
+                ),
+                child: const Text(
+                  'Back',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: Theme.of(context).colorScheme.primary,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: ElevatedButton(
+                  onPressed: () async {
+                    if (name.isNotEmpty) await _saveWakeWordChoice(name);
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOutCubic,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    shadowColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                  ),
+                  child: const Row(
+                    children: [
+                      Text('Next', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(width: 8),
+                      Icon(Icons.arrow_forward_rounded, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssistantNamePresetCard(String name, bool isDark) {
+    final isSelected = _assistantNameController.text.trim() == name;
+
+    return Container(
+      width: 104,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurface.withOpacity(0.08),
+          width: isSelected ? 2 : 1.2,
+        ),
+      ),
+      child: Card(
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+            : Theme.of(context).colorScheme.surface,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () {
+            setState(() {
+              _assistantNameController.text = name;
+              _wakeWordTestPassed = null;
+              _wakeWordTestHeard = null;
+            });
+            _saveWakeWordChoice(name);
+          },
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.record_voice_over_rounded,
+                size: 24,
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : (isDark ? Colors.grey[400] : Colors.grey[600]),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : (isDark ? Colors.grey[300] : Colors.grey[700]),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- STEP: VOICE TEST ---
+  Widget _buildVoiceTestPage(bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          const Text(
+            "Let's test your voice",
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "Say something and I'll say it back — this confirms speech-to-text "
+            'and text-to-speech both work before you rely on voice for real.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+            ),
+          ),
+          const Spacer(),
+          Center(
+            child: GestureDetector(
+              onTap: _isRunningVoiceTest ? null : _runVoiceTest,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Theme.of(context).colorScheme.primary.withOpacity(
+                    _isRunningVoiceTest ? 0.25 : 0.12,
+                  ),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                child: Icon(
+                  _isRunningVoiceTest ? Icons.graphic_eq_rounded : Icons.mic_rounded,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Text(
+              _isRunningVoiceTest ? 'Listening...' : 'Tap to speak',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white70 : Colors.black87,
+              ),
+            ),
+          ),
+          if (_voiceTestPassed != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: (_voiceTestPassed! ? Colors.green : Colors.orange)
+                    .withOpacity(0.1),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: (_voiceTestPassed! ? Colors.green : Colors.orange)
+                      .withOpacity(0.25),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _voiceTestPassed!
+                        ? Icons.check_circle_rounded
+                        : Icons.error_outline_rounded,
+                    color: _voiceTestPassed! ? Colors.green : Colors.orange,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _voiceTestPassed!
+                          ? 'Heard: "${_voiceTestHeard ?? ''}" — and spoke it back.'
+                          : "Didn't hear anything — check the microphone "
+                                'permission and try again.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF475569),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const Spacer(),
+          Row(
+            children: [
+              TextButton(
+                onPressed: () {
+                  _pageController.previousPage(
+                    duration: const Duration(milliseconds: 400),
+                    curve: Curves.easeOutCubic,
+                  );
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: isDark
+                      ? Colors.white
+                      : const Color(0xFF475569),
+                ),
+                child: const Text(
+                  'Back',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: Theme.of(context).colorScheme.primary,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.25),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: ElevatedButton(
+                  onPressed: () {
+                    _pageController.nextPage(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOutCubic,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    shadowColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                  ),
+                  child: const Row(
+                    children: [
+                      Text('Next', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(width: 8),
+                      Icon(Icons.arrow_forward_rounded, size: 16),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  // --- STEP: ASSISTANT READINESS CHECK ---
+  Widget _buildReadinessPage(bool isDark) {
+    final wakeWordConfigured = _assistantNameController.text.trim().isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          const Text(
+            'Assistant Readiness',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'One last check before you start.',
+            style: TextStyle(
+              fontSize: 13,
+              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView(
+              physics: const BouncingScrollPhysics(),
+              children: [
+                _buildReadinessRow(
+                  'Accessibility',
+                  _isAccessibilityGranted,
+                  isDark,
+                ),
+                _buildReadinessRow('Microphone', _isMicrophoneGranted, isDark),
+                _buildReadinessRow(
+                  'Notifications',
+                  _isNotificationsGranted,
+                  isDark,
+                ),
+                if (FeatureFlags.floatingOverlayEnabled)
+                  _buildReadinessRow(
+                    'Floating Bubble',
+                    _isOverlayGranted,
+                    isDark,
+                  ),
+                _buildReadinessRow(
+                  'Battery unrestricted',
+                  _isBatteryUnrestricted,
+                  isDark,
+                  advisory: true,
+                ),
+                _buildReadinessRow(
+                  'Wake word configured',
+                  wakeWordConfigured,
+                  isDark,
+                  advisory: true,
+                ),
+                _buildReadinessRow(
+                  'AI configured',
+                  _aiService.isConfigured,
+                  isDark,
+                ),
+              ],
+            ),
+          ),
+          if (!_canFinishSetup)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'Go back and finish the mandatory items above before finishing setup.',
+                style: TextStyle(fontSize: 12, color: Colors.orange[700]),
+              ),
+            ),
+          Container(
+            width: double.infinity,
+            height: 56,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              color: _canFinishSetup
+                  ? Theme.of(context).colorScheme.primary
+                  : (isDark
+                        ? const Color(0xFF1E293B)
+                        : const Color(0xFFE2E8F0)),
+              boxShadow: _canFinishSetup
+                  ? [
+                      BoxShadow(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withOpacity(0.25),
+                        blurRadius: 15,
+                        offset: const Offset(0, 6),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: ElevatedButton(
+              onPressed: _canFinishSetup ? _finishSetup : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.white,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Finish Setup',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(Icons.check_circle_outline_rounded, size: 20),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadinessRow(
+    String label,
+    bool ok,
+    bool isDark, {
+    bool advisory = false,
+  }) {
+    final color = ok ? Colors.green : (advisory ? Colors.orange : Colors.red);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(
+            ok
+                ? Icons.check_circle_rounded
+                : (advisory
+                      ? Icons.warning_amber_rounded
+                      : Icons.cancel_rounded),
+            color: color,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- STEP 2: PERMISSIONS SCREEN ---
   Widget _buildPermissionsPage(bool isDark) {
     return Padding(
@@ -836,17 +1566,26 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     isDark,
                   ),
                 ],
-                const SizedBox(height: 20),
-                _buildSectionHeader('OPTIONAL', isDark),
+                const SizedBox(height: 12),
                 _buildPermissionCard(
                   'Notifications',
-                  'Allows PrivateAgent to show ongoing tasks, alerts, and execution updates in your notification tray.',
+                  'Required for the ongoing "listening" indicator voice features show while active — not just task-complete alerts. Without this, background voice features can be silently demoted by Android.',
                   Icons.notifications_rounded,
                   _isNotificationsGranted,
                   () => _requestPermission(Permission.notification),
                   isDark,
                 ),
                 const SizedBox(height: 12),
+                _buildPermissionCard(
+                  'Battery Optimization',
+                  'Allow PrivateAgent to run in the background so it can hear your wake word later. Android may not let every app request this — if declined, voice features still work via the mic button.',
+                  Icons.battery_charging_full_rounded,
+                  _isBatteryUnrestricted,
+                  () => _requestPermission(Permission.ignoreBatteryOptimizations),
+                  isDark,
+                ),
+                const SizedBox(height: 20),
+                _buildSectionHeader('OPTIONAL', isDark),
                 _buildPermissionCard(
                   'Contacts',
                   'Used to look up phone numbers and contact names when you ask the AI to call or text someone.',
@@ -903,12 +1642,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 height: 48,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  color: _canProceedToModel
+                  color: _canProceedFromPermissions
                       ? Theme.of(context).colorScheme.primary
                       : (isDark
                             ? const Color(0xFF1E293B)
                             : const Color(0xFFE2E8F0)),
-                  boxShadow: _canProceedToModel
+                  boxShadow: _canProceedFromPermissions
                       ? [
                           BoxShadow(
                             color: Theme.of(
@@ -921,7 +1660,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       : null,
                 ),
                 child: ElevatedButton(
-                  onPressed: _canProceedToModel
+                  onPressed: _canProceedFromPermissions
                       ? () {
                           _pageController.nextPage(
                             duration: const Duration(milliseconds: 400),
@@ -1284,7 +2023,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                         ],
                 ),
                 child: ElevatedButton(
-                  onPressed: _isValidating ? null : _testAndSave,
+                  onPressed: _isValidating ? null : _validateAiConfig,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.transparent,
                     foregroundColor: Colors.white,
@@ -1308,14 +2047,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       : const Row(
                           children: [
                             Text(
-                              'Finish Setup',
+                              'Continue',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 15,
                               ),
                             ),
                             SizedBox(width: 8),
-                            Icon(Icons.check_circle_outline_rounded, size: 20),
+                            Icon(Icons.arrow_forward_rounded, size: 16),
                           ],
                         ),
                 ),

@@ -17,6 +17,7 @@ import android.net.Uri
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.privateagent/accessibility"
     private val EVENT_CHANNEL = "com.privateagent/accessibility_events"
+    private val VOICE_ASSISTANT_CHANNEL = "com.privateagent/voice_assistant"
     private var eventSink: EventChannel.EventSink? = null
     private var overlayView: View? = null
 
@@ -42,6 +43,32 @@ class MainActivity : FlutterActivity() {
         )
 
         registerAccessibilityChannel(flutterEngine, this)
+        registerVoiceAssistantChannel(flutterEngine, this)
+    }
+
+    private fun registerVoiceAssistantChannel(flutterEngine: FlutterEngine, activity: MainActivity) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VOICE_ASSISTANT_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "startListening" -> {
+                        val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
+                            .setAction(VoiceAssistantForegroundService.ACTION_START)
+                        androidx.core.content.ContextCompat.startForegroundService(activity, intent)
+                        result.success(true)
+                    }
+
+                    "stopListening" -> {
+                        val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
+                            .setAction(VoiceAssistantForegroundService.ACTION_STOP)
+                        activity.startService(intent)
+                        result.success(true)
+                    }
+
+                    "isListening" -> result.success(VoiceAssistantForegroundService.isRunning)
+
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     companion object {

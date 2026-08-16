@@ -7,6 +7,7 @@ import '../models/chat_message.dart';
 import '../services/ai_service.dart';
 import '../services/action_handler.dart';
 import '../services/voice_service.dart';
+import '../services/voice_conversation_controller.dart';
 import '../widgets/message_bubble.dart';
 import '../services/telegram_service.dart';
 import '../services/chat_history_service.dart';
@@ -32,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final VoiceService _voiceService = VoiceService();
   final NotificationService _notificationService = NotificationService();
   late final TelegramService _telegramService;
+  late final VoiceConversationController _voiceController;
 
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
@@ -52,6 +54,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _telegramService = TelegramService(_actionHandler, _aiService);
+    _voiceController = VoiceConversationController(
+      aiService: _aiService,
+      actionHandler: _actionHandler,
+      voiceService: _voiceService,
+      onStateChanged: _onVoiceStateChanged,
+      onTranscript: _onVoiceTranscript,
+      onResponse: _onVoiceResponse,
+    );
     _initServices();
     _startOverlayHistorySync();
     // Register as the handler for overlay bubble tasks
@@ -299,25 +309,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Drives the mic-button voice turn via [VoiceConversationController]:
+  /// listen → send through the existing agent stack → speak the result.
+  /// This is the same "existing push-to-talk trigger" the wake-word engine
+  /// (Phase 3+) will eventually call the same way, just automatically.
   Future<void> _toggleVoice() async {
-    if (_isListening) {
-      await _voiceService.stopListening();
-      setState(() => _isListening = false);
+    if (_voiceController.state != VoiceConversationState.idle) {
+      _voiceController.cancel();
       return;
     }
+    await _voiceController.startTurn();
+  }
 
-    setState(() => _isListening = true);
+  void _onVoiceStateChanged(VoiceConversationState state) {
+    if (!mounted) return;
+    setState(() {
+      _isListening = state == VoiceConversationState.woken ||
+          state == VoiceConversationState.listening ||
+          state == VoiceConversationState.transcribing ||
+          state == VoiceConversationState.continuingConversation;
+      _isLoading = state == VoiceConversationState.thinking ||
+          state == VoiceConversationState.speaking;
+    });
+  }
 
-    await _voiceService.startListening(
-      onResult: (text) {
-        _sendMessage(text);
-      },
-      onDone: () {
-        if (mounted) {
-          setState(() => _isListening = false);
-        }
-      },
-    );
+  void _onVoiceTranscript(String transcript) {
+    if (!mounted || transcript.isEmpty) return;
+    setState(() {
+      _messages.add(ChatMessage(role: 'user', content: transcript));
+    });
+    _scrollToBottom();
+    unawaited(_saveSession());
+  }
+
+  void _onVoiceResponse(String response, {required bool success}) {
+    if (!mounted) return;
+    setState(() {
+      _messages.add(ChatMessage(role: 'assistant', content: response));
+    });
+    _scrollToBottom();
+    unawaited(_saveSession());
   }
 
   void _startNewChat() {
@@ -353,6 +384,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _overlayHistoryTimer?.cancel();
     _textController.dispose();
     _scrollController.dispose();
+    _voiceController.cancel();
     _voiceService.dispose();
     _telegramService.dispose();
     super.dispose();

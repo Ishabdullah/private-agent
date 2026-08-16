@@ -6,6 +6,7 @@ import '../services/ai_service.dart';
 import '../services/shizuku_service.dart';
 import '../services/screen_automation_service.dart';
 import '../services/telegram_service.dart';
+import '../services/voice_assistant_foreground_service.dart';
 import 'task_history_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -45,6 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _useSystemPrompt = true;
   bool _floatingIconEnabled = false;
   bool _isOverlayPermissionGranted = false;
+  bool _voiceAssistantListening = false;
 
   final Map<String, PermissionStatus> _permissions = {};
 
@@ -78,6 +80,14 @@ class _SettingsScreenState extends State<SettingsScreen>
     _checkPermissions();
     if (FeatureFlags.floatingOverlayEnabled) {
       _checkOverlayStatus();
+    }
+    _checkVoiceAssistantStatus();
+  }
+
+  Future<void> _checkVoiceAssistantStatus() async {
+    final isListening = await VoiceAssistantForegroundService.isListening();
+    if (mounted) {
+      setState(() => _voiceAssistantListening = isListening);
     }
   }
 
@@ -747,6 +757,36 @@ class _SettingsScreenState extends State<SettingsScreen>
                   },
                   contentPadding: EdgeInsets.zero,
                 ),
+            ],
+          ),
+
+          // 4b. Voice Assistant background listening (Phase 5a shell — no
+          // wake-word engine wired in yet, this only proves the foreground
+          // service starts/stops/survives backgrounding).
+          _buildSettingsCard(
+            icon: Icons.mic_none_outlined,
+            title: 'Voice Assistant (Beta)',
+            subtitle: 'Always-on wake-word listening — early preview',
+            isDark: isDark,
+            children: [
+              SwitchListTile(
+                title: const Text('Background listening'),
+                subtitle: const Text(
+                  'Keeps an ongoing notification while active. Wake-word '
+                  'detection is not implemented yet — this only tests the '
+                  'background service.',
+                ),
+                value: _voiceAssistantListening,
+                onChanged: (bool value) async {
+                  if (value) {
+                    await VoiceAssistantForegroundService.start();
+                  } else {
+                    await VoiceAssistantForegroundService.stop();
+                  }
+                  setState(() => _voiceAssistantListening = value);
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
             ],
           ),
 

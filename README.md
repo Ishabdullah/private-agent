@@ -2,6 +2,8 @@
 
 PrivateAgent is an open-source Android automation agent built with Flutter. It utilizes the DeepSeek API and native Android Accessibility Services to interpret screen layouts and execute multi-step tasks across any installed application via natural language commands.
 
+This is a fork of [orailnoor/private-agent](https://github.com/orailnoor/private-agent) — all credit for the original app goes to that project. This fork continues active development, including a wake-word-activated voice assistant feature (in progress).
+
 ## Architecture
 
 The system operates on a continuous feedback loop:
@@ -17,11 +19,16 @@ The system operates on a continuous feedback loop:
 - **Screen Reading:** Parses the Android UI tree to map clickable, scrollable, and editable elements.
 - **Coordinate-Based Interaction:** Simulates physical screen taps based on coordinate geometry, mitigating issues with missing text labels or inaccessible icons.
 - **Remote Access:** Integrates with the Telegram Bot API via background polling, allowing users to issue commands and monitor task execution progress remotely.
-- **Voice Control:** Native speech-to-text integration for hands-free operation.
+- **Voice Control:** Native speech-to-text/text-to-speech for hands-free operation. Tap the mic, speak your request, and the agent replies out loud. If the agent's reply sounds like a follow-up question, the mic automatically reopens for your answer without needing another tap.
+
+## Security & Privacy
+
+- Your AI provider API key and Telegram bot token are stored in Android's encrypted, Keystore-backed secure storage (`flutter_secure_storage`), not plain-text preferences.
+- Screen contents and voice transcripts are sent only to the AI provider/base URL you configure in Settings — nothing else leaves the device unless you enable Telegram remote control.
 
 ## Installation
 
-Download the latest APK directly from the [Releases Page](https://github.com/orailnoor/private-agent/releases).
+Download the latest APK directly from the [Releases Page](https://github.com/Ishabdullah/private-agent/releases).
 
 Choose `app-universal-release.apk` when it is available. It supports ARM64,
 32-bit ARM, and x86_64 devices in one package. If a release only provides split
@@ -36,13 +43,14 @@ also checked for Android 15/16's 16 KB native-library alignment requirement.
 This app requires an AI brain to operate. You can use it **100% for free** by using OpenRouter's free models.
 
 1. Install the APK on your Android device (API 30+ recommended).
-2. Go to [OpenRouter.ai](https://openrouter.ai/) and create a free account.
-3. Generate a free API Key.
-4. Launch PrivateAgent and go to the **Settings** screen.
-5. Tap the **"OpenRouter"** quick-select chip under Base URL.
+2. Walk through first-run setup: pick a name for your assistant, grant the requested permissions (Accessibility, Microphone, Notifications, and — if your device allows it — a battery-optimization exemption so background features work reliably), configure your AI provider, try the voice test, and confirm the readiness check before finishing.
+3. Go to [OpenRouter.ai](https://openrouter.ai/) and create a free account.
+4. Generate a free API Key.
+5. During setup (or later from **Settings**), tap the **"OpenRouter"** quick-select chip under Base URL.
 6. Paste your API Key.
 7. Type `openai/gpt-oss-120b:free` (or any other free model) into the Model field.
-8. Enable the **"PrivateAgent Screen Control"** service in your Android Accessibility Settings.
+
+Note: naming your assistant is groundwork for an upcoming always-on "Hey [name]" wake-word feature — it isn't active yet. Voice control today works via the mic button, as described above. Settings also has an early "Voice Assistant (Beta)" toggle that starts a background listening service — it doesn't detect any wake word yet, it only keeps an ongoing notification alive as a step toward that feature.
 
 ### “Restricted setting” when enabling Screen Control
 
@@ -64,6 +72,10 @@ To enable remote access:
 1. Acquire a bot token from BotFather on Telegram.
 2. Input the token in the PrivateAgent Settings screen and enable the integration toggle.
 3. The application will maintain a background polling connection to the Telegram API to receive commands.
+
+## Credits
+
+This project is a fork of [orailnoor/private-agent](https://github.com/orailnoor/private-agent). All credit for the original app design and implementation goes to that project's author.
 
 ## License
 

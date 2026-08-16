@@ -17,6 +17,8 @@
         android:name="android.permission.SYSTEM_ALERT_WINDOW"
         tools:node="remove" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- For speech recognition -->
     <queries>
@@ -67,6 +69,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- Phase 5a: foreground-service shell for always-on wake-word
+             listening. No audio/wake-word engine wired in yet. -->
+        <service
+            android:name=".VoiceAssistantForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <receiver android:name=".BackgroundEngineReceiver" android:exported="true">
             <intent-filter>

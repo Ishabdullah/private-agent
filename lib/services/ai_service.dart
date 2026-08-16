@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/agent_action.dart';
+import 'secure_secret_store.dart';
 
 class AiResponse {
   final String content;
@@ -107,7 +108,10 @@ Answer questions, explain concepts, brainstorm, write emails/messages, and chat 
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _apiKey = prefs.getString('api_key');
+    _apiKey = await SecureSecretStore.readAndMigrate(
+      secureKey: 'secure_api_key',
+      legacyPrefsKey: 'api_key',
+    );
     _baseUrl = prefs.getString('api_base_url') ?? _defaultBaseUrl;
     _model = prefs.getString('api_model') ?? _defaultModel;
     _maxSteps = prefs.getInt('api_max_steps') ?? 15;
@@ -132,7 +136,7 @@ Answer questions, explain concepts, brainstorm, write emails/messages, and chat 
     }
 
     _apiKey = cleanApiKey;
-    await prefs.setString('api_key', cleanApiKey);
+    await SecureSecretStore.write('secure_api_key', cleanApiKey);
 
     if (baseUrl != null && baseUrl.isNotEmpty) {
       _baseUrl = baseUrl;

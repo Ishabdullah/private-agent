@@ -2,6 +2,9 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Official sherpa-onnx Android AAR (wake-word KWS engine, Phase 5) is
+        // published via JitPack, not Maven Central.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

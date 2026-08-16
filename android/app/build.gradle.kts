@@ -7,7 +7,10 @@ plugins {
 
 android {
     namespace = "com.orailnoor.privateagent"
-    compileSdk = flutter.compileSdkVersion
+    // flutter.compileSdkVersion currently resolves to 36, but flutter_secure_storage
+    // requires compiling against 37 (backward compatible) — pinned explicitly per
+    // Flutter's own build-time recommendation rather than left to the default.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -46,4 +49,15 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // sherpa-onnx (Phase 5 wake-word KWS engine) — official JitPack coordinate
+    // per k2-fsa/sherpa-onnx's own jitpack.yml (groupId com.github.k2-fsa,
+    // artifactId sherpa-onnx, version pinned to a GitHub release tag). This
+    // AAR bundles the Android .so per ABI; resolution is being verified here
+    // before any Kotlin code depends on it (see plan doc Section 8.3.2).
+    implementation("com.github.k2-fsa:sherpa-onnx:1.13.5") {
+        // The published pom pulls in the desktop-JVM jar (same package,
+        // duplicate classes) as a transitive dependency — Android only
+        // needs the AAR, which already bundles the native .so per ABI.
+        exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+    }
 }

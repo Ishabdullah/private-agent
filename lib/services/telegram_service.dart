@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'action_handler.dart';
 import 'ai_service.dart';
+import 'secure_secret_store.dart';
 
 class TelegramService {
   final ActionHandler _actionHandler;
@@ -22,7 +23,11 @@ class TelegramService {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _botToken = prefs.getString('telegram_bot_token') ?? '';
+    _botToken = await SecureSecretStore.readAndMigrate(
+          secureKey: 'secure_telegram_bot_token',
+          legacyPrefsKey: 'telegram_bot_token',
+        ) ??
+        '';
     _isEnabled = prefs.getBool('telegram_enabled') ?? false;
 
     if (_isEnabled && _botToken.isNotEmpty) {
@@ -34,7 +39,7 @@ class TelegramService {
     _botToken = botToken;
     _isEnabled = isEnabled;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('telegram_bot_token', _botToken);
+    await SecureSecretStore.write('secure_telegram_bot_token', _botToken);
     await prefs.setBool('telegram_enabled', _isEnabled);
 
     if (_isEnabled && _botToken.isNotEmpty) {

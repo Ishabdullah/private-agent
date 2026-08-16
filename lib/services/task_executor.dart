@@ -9,6 +9,7 @@ import 'task_history_logger.dart';
 import 'shizuku_service.dart';
 import 'skill_memory_service.dart';
 import 'recovery_engine.dart';
+import 'task_json_utils.dart';
 import '../models/saved_skill.dart';
 
 /// Executes multi-step UI automation tasks using LLM-guided screen reading.
@@ -89,25 +90,6 @@ Rules:
 - Keep reasoning very brief (1 sentence)
 ''';
 
-  /// Extract JSON safely even if wrapped in markdown or conversational text
-  String _extractJson(String text) {
-    // 1. Try to find a markdown json code block
-    final codeBlockRegex = RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```');
-    final match = codeBlockRegex.firstMatch(text);
-    if (match != null) {
-      return match.group(1)!;
-    }
-
-    // 2. Fallback: find the first { and the last }
-    final startIndex = text.indexOf('{');
-    final endIndex = text.lastIndexOf('}');
-    if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
-      return text.substring(startIndex, endIndex + 1);
-    }
-
-    return text.trim();
-  }
-
   /// Execute a multi-step task with LLM guidance
   Future<String> executeTask(String userGoal) async {
     await ScreenAutomationService.logToNative(
@@ -163,7 +145,7 @@ Rules:
     }
 
     // Smart pre-launch shortcuts: execute common sequences without LLM
-    final shortcut = _getNavigationShortcut(userGoal);
+    final shortcut = getNavigationShortcut(userGoal);
     String lastAction = '';
     int sameActionCount = 0;
     int consecutiveFailures = 0;
@@ -371,7 +353,7 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
       Map<String, dynamic>? actionJson;
       String? parsedJsonStr;
       try {
-        String jsonStr = _extractJson(response);
+        String jsonStr = extractTaskActionJson(response);
 
         actionJson = jsonDecode(jsonStr) as Map<String, dynamic>;
         parsedJsonStr = jsonStr;
@@ -395,7 +377,7 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
             name: 'PrivateAgent',
           );
 
-          String jsonStr = _extractJson(retryResponse.content);
+          String jsonStr = extractTaskActionJson(retryResponse.content);
           actionJson = jsonDecode(jsonStr) as Map<String, dynamic>;
           parsedJsonStr = jsonStr;
         } catch (e) {
@@ -807,74 +789,4 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
     return true; // All steps succeeded
   }
 
-  /// Returns predefined navigation steps for common tasks
-  List<ActionStep>? _getNavigationShortcut(String goal) {
-    final lower = goal.toLowerCase();
-
-    if (lower.contains('dark mode') || lower.contains('dark theme')) {
-      return [
-        ActionStep(action: 'open_app', params: {'app_name': 'Settings'}),
-        ActionStep(action: 'click_text', params: {'text': 'Display'}),
-      ];
-    }
-    if (lower.contains('wifi') || lower.contains('wi-fi')) {
-      return [
-        ActionStep(action: 'open_app', params: {'app_name': 'Settings'}),
-        ActionStep(
-          action: 'click_text',
-          params: {'text': 'Network & internet'},
-        ),
-      ];
-    }
-    if (lower.contains('bluetooth')) {
-      return [
-        ActionStep(action: 'open_app', params: {'app_name': 'Settings'}),
-        ActionStep(action: 'click_text', params: {'text': 'Connected devices'}),
-      ];
-    }
-
-    final appPatterns = <String, List<String>>{
-      'Settings': ['settings', 'brightness', 'display', 'notification'],
-      'Play Store': [
-        'play store',
-        'playstore',
-        'download',
-        'install app',
-        'google play',
-      ],
-      'YouTube': ['youtube'],
-      'WhatsApp': ['whatsapp'],
-      'Chrome': ['chrome', 'browse', 'search google'],
-      'Camera': ['camera', 'take a photo', 'take photo', 'take a picture'],
-      'Gallery': ['gallery', 'photos'],
-      'Messages': ['message', 'sms', 'text to'],
-      'Phone': ['call', 'dial'],
-      'Gmail': ['gmail', 'email'],
-      'Maps': ['maps', 'navigate to', 'directions'],
-      'Clock': ['alarm', 'timer', 'stopwatch'],
-      'Calculator': ['calculator', 'calculate', 'calc'],
-    };
-
-    for (final entry in appPatterns.entries) {
-      for (final keyword in entry.value) {
-        if (lower.contains(keyword)) {
-          return [
-            ActionStep(action: 'open_app', params: {'app_name': entry.key}),
-          ];
-        }
-      }
-    }
-
-    // Generic fallback for "open X"
-    final openMatch = RegExp(r'^open\s+([a-zA-Z0-9]+)').firstMatch(lower);
-    if (openMatch != null) {
-      String app = openMatch.group(1)!;
-      app = app[0].toUpperCase() + app.substring(1);
-      return [
-        ActionStep(action: 'open_app', params: {'app_name': app}),
-      ];
-    }
-
-    return null;
-  }
 }
