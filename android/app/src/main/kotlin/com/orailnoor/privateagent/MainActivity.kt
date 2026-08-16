@@ -20,6 +20,32 @@ class MainActivity : FlutterActivity() {
     private val VOICE_ASSISTANT_CHANNEL = "com.privateagent/voice_assistant"
     private var eventSink: EventChannel.EventSink? = null
     private var overlayView: View? = null
+    private var voiceAssistantChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleWakeWordIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleWakeWordIntent(intent)
+    }
+
+    private fun handleWakeWordIntent(intent: Intent?) {
+        if (intent?.action != VoiceAssistantForegroundService.ACTION_WAKE_DETECTED) return
+        val name = intent.getStringExtra(VoiceAssistantForegroundService.EXTRA_ASSISTANT_NAME)
+        // Posted so it runs after configureFlutterEngine has registered the
+        // channel (which happens during super.onCreate() above, but the
+        // engine's Dart side may not have attached its own handler yet on a
+        // cold start).
+        window.decorView.post {
+            voiceAssistantChannel?.invokeMethod(
+                "onWakeWordDetected",
+                mapOf("assistantName" to name),
+            )
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -47,8 +73,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun registerVoiceAssistantChannel(flutterEngine: FlutterEngine, activity: MainActivity) {
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VOICE_ASSISTANT_CHANNEL)
-            .setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VOICE_ASSISTANT_CHANNEL)
+        voiceAssistantChannel = channel
+        channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "startListening" -> {
                         val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
@@ -65,6 +92,13 @@ class MainActivity : FlutterActivity() {
                     }
 
                     "isListening" -> result.success(VoiceAssistantForegroundService.isRunning)
+
+                    "resumeListening" -> {
+                        val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
+                            .setAction(VoiceAssistantForegroundService.ACTION_START)
+                        androidx.core.content.ContextCompat.startForegroundService(activity, intent)
+                        result.success(true)
+                    }
 
                     else -> result.notImplemented()
                 }

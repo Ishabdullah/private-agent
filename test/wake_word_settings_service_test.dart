@@ -92,9 +92,9 @@ void main() {
     expect(WakeWordSettingsService.isPresetName('Jarvis'), isFalse);
   });
 
-  test('tierForName is always customKeywordSpotting (Vosk-only, no Porcupine tiers)', () {
+  test('tierForName is always curated (every supported name is a bundled model)', () {
     final service = WakeWordSettingsService();
-    expect(service.tierForName('Aigentik'), WakeWordTier.customKeywordSpotting);
-    expect(service.tierForName('Bumblebee'), WakeWordTier.customKeywordSpotting);
+    expect(service.tierForName('Aigentik'), WakeWordTier.curated);
+    expect(service.tierForName('Bumblebee'), WakeWordTier.curated);
   });
 }

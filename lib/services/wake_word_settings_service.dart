@@ -5,12 +5,17 @@ import '../models/wake_word_config.dart';
 class WakeWordSettingsService {
   static const _prefsKey = 'wake_word_config';
 
-  /// Suggested assistant-name presets shown as tappable tiles during
-  /// onboarding. Purely a UX convenience — per the Phase 5 decision
-  /// (2026-08-16, sherpa-onnx open-vocabulary KWS), picking a preset vs.
-  /// typing a custom name is technically identical: both go through the same
-  /// engine with the same cost profile, no per-phrase model training needed.
-  static const presetNames = ['Nova', 'Aigentik', 'Private'];
+  /// The ONLY assistant names that get real wake-word detection (Phase 5b
+  /// decision, 2026-08-16). sherpa-onnx's KeywordSpotter requires each
+  /// keyword to be pre-tokenized into the model's BPE sub-word pieces
+  /// offline (confirmed by reading sherpa-onnx's C++ `EncodeBase` — it does
+  /// a literal per-token lookup against `tokens.txt`, no on-device
+  /// tokenizer exists) — so free-typed names can no longer be supported at
+  /// runtime the way the Phase 4 onboarding UI implied. These 5 names were
+  /// tokenized at development time via `text2token` and are bundled in
+  /// `assets/kws/keywords.txt`; see `docs/ANDROID_DIGITAL_ASSISTANT_PROGRESS.md`
+  /// for how to add more. Onboarding must restrict selection to this list.
+  static const presetNames = ['Aigentik', 'Nova', 'Codey', 'Juno', 'Milo'];
 
   /// The only wake-word engine this app ships (Phase 5 decision; supersedes
   /// the Phase 3 Vosk-only decision after vosk-android/vosk_flutter were
@@ -60,8 +65,8 @@ class WakeWordSettingsService {
     _config = null;
   }
 
-  /// Always `customKeywordSpotting` under the single-engine, open-vocabulary
-  /// KWS decision — kept as a method (rather than a constant) so a future
-  /// session reintroducing Porcupine only needs to change this one place.
-  WakeWordTier tierForName(String name) => WakeWordTier.customKeywordSpotting;
+  /// Always `curated` now — every supported name is a pre-tokenized,
+  /// bundled model shipped with the app (see [presetNames]), which is
+  /// exactly what `WakeWordTier.curated` was defined to mean (Section 8.4).
+  WakeWordTier tierForName(String name) => WakeWordTier.curated;
 }

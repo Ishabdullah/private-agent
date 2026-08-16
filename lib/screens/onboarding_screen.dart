@@ -314,7 +314,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   /// Persists the assistant name/wake phrase immediately on selection, per
   /// the plan's requirement that backgrounding mid-onboarding doesn't lose
-  /// the choice. Tier/engine are fixed to the Phase 3 Vosk-only decision.
+  /// the choice. `name` should always be one of
+  /// `WakeWordSettingsService.presetNames` — those are the only names with
+  /// a bundled, pre-tokenized wake-word model (Phase 5b decision).
   Future<void> _saveWakeWordChoice(String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
@@ -948,10 +950,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           ),
           const SizedBox(height: 6),
           Text(
-            'Pick a name for your assistant — type anything you like. Wake-word '
-            'detection runs fully offline, but uses more battery than a '
-            'dedicated wake-word chip would; you can always fall back to the '
-            'mic button.',
+            'Pick a name for your assistant. Wake-word detection currently '
+            'only works for these 5 names — each one ships with its own '
+            'offline detection model built into the app. Support for typing '
+            'any name may come later; for now, other names still work fine '
+            'everywhere else in the app via the mic button.',
             style: TextStyle(
               fontSize: 13,
               height: 1.4,
@@ -971,13 +974,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ],
               ],
             ),
-          ),
-          const SizedBox(height: 20),
-          _buildFormTextField(
-            controller: _assistantNameController,
-            label: 'Or type your own',
-            hint: 'e.g. Copper',
-            isDark: isDark,
           ),
           const SizedBox(height: 16),
           if (name.isNotEmpty)

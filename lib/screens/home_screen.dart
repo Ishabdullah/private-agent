@@ -8,6 +8,7 @@ import '../services/ai_service.dart';
 import '../services/action_handler.dart';
 import '../services/voice_service.dart';
 import '../services/voice_conversation_controller.dart';
+import '../services/voice_assistant_foreground_service.dart';
 import '../widgets/message_bubble.dart';
 import '../services/telegram_service.dart';
 import '../services/chat_history_service.dart';
@@ -66,6 +67,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _startOverlayHistorySync();
     // Register as the handler for overlay bubble tasks
     onOverlayTask = (task) => _sendMessage(task);
+    VoiceAssistantForegroundService.onWakeWordDetected = _onWakeWordDetected;
+    VoiceAssistantForegroundService.ensureHandlerRegistered();
+  }
+
+  /// Native `VoiceAssistantForegroundService` calls this (via the
+  /// `com.privateagent/voice_assistant` channel) when its sherpa-onnx
+  /// KeywordSpotter loop fires. Drives the same turn the mic button does —
+  /// the wake-word engine is just an automatic trigger for [_toggleVoice]'s
+  /// existing path, not a separate agent (Section 7's "reuse, don't
+  /// rewrite" design decision).
+  void _onWakeWordDetected(String assistantName) {
+    if (_voiceController.state != VoiceConversationState.idle) return;
+    unawaited(_voiceController.startTurn());
   }
 
   Future<void> _initServices() async {
@@ -331,6 +345,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _isLoading = state == VoiceConversationState.thinking ||
           state == VoiceConversationState.speaking;
     });
+    if (state == VoiceConversationState.idle) {
+      // Native pauses its KWS audio loop the instant it fires (to avoid two
+      // simultaneous microphone consumers) — resume it once the turn this
+      // triggered has fully finished. No-op if background listening isn't
+      // running (the mic-button path also lands here).
+      unawaited(_resumeWakeWordListeningIfActive());
+    }
+  }
+
+  Future<void> _resumeWakeWordListeningIfActive() async {
+    if (await VoiceAssistantForegroundService.isListening()) {
+      await VoiceAssistantForegroundService.resumeListening();
+    }
   }
 
   void _onVoiceTranscript(String transcript) {
