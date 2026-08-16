@@ -62,6 +62,33 @@ This is a **native C++ exception inside onnxruntime**, thrown from deep inside t
 - Copied the fp32 build to `~/storage/downloads/privateagent-wakeword-fixed-arm64-debug.apk` (171 MB).
 - **What to test**: install this build, pick one of the 5 names, enable Settings → Voice Assistant (Beta) → Background listening, and this time actually **say "Hey [name]" out loud** — confirm it triggers a real voice turn (listens, responds) rather than just checking it doesn't crash. Leave it running for a few minutes doing other things too, to catch anything that only shows up over a longer session (battery drain, delayed crash, false positives from ambient noise/TV/etc.).
 - **Standing recommendation**: keep using `adb` over WiFi for any future crash investigation on this feature — it was the difference between guessing (last session, wrong fix) and finding the exact byte-for-byte deterministic cause (this session, right fix) in a handful of `logcat` reads.
+
+### 2026-08-16 — Second real crash: SIGSEGV on actual wake-word detection (fixed, device-verified end to end)
+
+**The fp32 model fix above was necessary but not sufficient.** User reported: saying "Hey [name]" now beeped (mic engaged) but then the app crashed with Android's "app has a bug" system dialog. This is a *different* crash from the reshape one — it only happens on an actual detection firing, not just from the KWS loop running.
+
+**Root cause, found immediately via the now-standard adb logcat workflow**:
+```
+VoiceAssistant: Wake word detected for NOVA
+libc: Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x8 in tid ... (Thread-6)
+...VoiceAssistantForegroundService.processSamples+824
+```
+`onWakeWordDetected()` called `stopSpotting()` — but it was itself called from *inside* `processSamples()`'s decode loop, which runs *on* `recordingThread`. `stopSpotting()` did `recordingThread?.join(500)` (a thread trying to join itself — meaningless) and, worse, called `stream.release()` (freeing the native `OnlineStream`) while the surrounding `while (spotter.isReady(activeStream))` loop in `processSamples()` still held and was about to reuse that same `activeStream` reference — a use-after-free. `fault addr 0x8` (a near-null read) is the classic signature of exactly this kind of freed-object dereference. No `catch (e: Throwable)` can intercept this either — it's a native SIGSEGV, not a JVM exception.
+
+**Fix** (`VoiceAssistantForegroundService.kt`): restructured so native resource cleanup only ever happens once, in `processSamples()`'s own `finally` block, on the thread that actually owns the resources:
+- Detecting a keyword now just sets `isSpotting = false`, calls a renamed `notifyWakeWordDetected()` (launch-activity logic only, no cleanup), and `break`s out of both loops via a labeled `loop@`.
+- `processSamples()` wraps its whole loop in `try { ... } finally { releaseAudioResources() }` — this runs whether the loop exits via detection, an exception, or `isSpotting` being flipped externally.
+- `stopSpotting()` (still used for `ACTION_STOP` / `onDestroy` / setup failures — all external-thread callers) now just flips the flag, joins the thread from *outside* it (valid this time), and calls the same `releaseAudioResources()` afterward as a safety net for the setup-failure case where the thread never started.
+
+**Verified end-to-end on the user's physical device via adb** — the most thorough verification any Phase 5 change has gotten:
+- Installed via `adb install` (had to fully `adb uninstall` first this time — a *partial* uninstall failure earlier in the session left a stale process running with the OLD buggy code still active behind a UI that looked like a fresh install; `adb shell dumpsys activity processes` + checking `firstInstallTime` was how this was caught — worth checking both after every `adb install` on top of an existing debug build).
+- Also discovered mid-session that Android's per-app data backup/restore silently repopulates `SharedPreferences` (chat history, a real API key, wake-word config) even after a clean uninstall/reinstall on this device — so "fresh install" here didn't mean "empty app state" the way it would on a throwaway test device. Worth remembering: don't assume a clean data slate just because the package was reinstalled.
+- Used `termux-tts-speak` (Termux:API, already installed) to literally say "Hey Nova" out loud through the device's own speaker as an acoustic loopback into the mic — this is what let this session confirm actual wake-word firing end-to-end without needing the user to speak, whereas the previous session could only confirm the audio loop didn't crash while idle.
+- **First test**: TTS said "Hey Nova" → logcat showed `Wake word detected for NOVA` → **no crash** → app came to foreground → a real conversation turn completed (visible in the chat UI, a real LLM response). This is the first time any part of Phase 5's wake-word pipeline has been confirmed working end-to-end on real hardware, not just build-verified.
+- Second immediate re-test didn't re-fire detection in the following few seconds (plausibly the resume-after-turn timing, or the device's foreground app changed on its own mid-test — this is the user's actively-used personal phone, not a dedicated test device, so unrelated interruptions are expected) — process stayed alive with no crash either way, which is what mattered for confirming the fix held.
+- Copied the fixed build to `~/storage/downloads/privateagent-wakeword-fixed-v2-arm64-debug.apk` (171 MB).
+- **What to test**: same as before — say "Hey [name]" and confirm it responds — but this should now actually work rather than crash. Worth testing a few times across a real session (not just once) since the fix addresses a specific race/lifecycle bug, and edge cases (e.g. detecting while a manual mic-button turn is already in progress) haven't been explicitly exercised yet.
+- **Next concrete action**: unchanged from before — Phase 6, or continued real-device soak-testing of Phase 5 (battery drain over hours, false-positive rate from ambient noise/TV, the screen-off handoff gap already logged as a Phase 16 item).
 - Also noted, not yet acted on: `flutter analyze` warns Kotlin `2.2.20` is below Flutter's soon-to-be-required `2.3.20` floor — non-blocking today, worth bumping before that becomes a hard failure.
 - `flutter build apk --release` (proper signing, Phase 14 territory) still has not been attempted; only `--debug` is confirmed working (see the RESOLVED build-fix section below). **`--split-per-abi` is now the default recommendation for debug handoffs** — the universal debug APK is over 300 MB with the sherpa-onnx AAR + models bundled; arm64-v8a alone is ~163 MB.
 

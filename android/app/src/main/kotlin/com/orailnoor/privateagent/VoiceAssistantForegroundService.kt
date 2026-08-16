@@ -220,7 +220,7 @@ class VoiceAssistantForegroundService : Service() {
         val activeStream = stream ?: return
 
         try {
-            while (isSpotting) {
+            loop@ while (isSpotting) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                 if (read > 0) {
                     val samples = FloatArray(read) { buffer[it] / 32768.0f }
@@ -230,7 +230,9 @@ class VoiceAssistantForegroundService : Service() {
                         val result = spotter.getResult(activeStream)
                         if (result.keyword.isNotBlank()) {
                             spotter.reset(activeStream)
-                            onWakeWordDetected(configuredName)
+                            isSpotting = false
+                            notifyWakeWordDetected(configuredName)
+                            break@loop
                         }
                     }
                 }
@@ -238,12 +240,21 @@ class VoiceAssistantForegroundService : Service() {
         } catch (e: Throwable) {
             android.util.Log.e("VoiceAssistant", "KWS decode loop failed", e)
             isSpotting = false
+        } finally {
+            // Release native resources here, on the thread that owns them.
+            // Previously this was done by calling stopSpotting() from
+            // onWakeWordDetected() (itself called from inside this loop),
+            // which (a) tried to join() this exact thread from itself —
+            // meaningless/blocking — and (b) freed `activeStream` while
+            // the loop above still held a reference to it, a use-after-free
+            // that crashed with SIGSEGV the moment a wake word was actually
+            // detected on a real device. Cleanup now only ever happens here.
+            releaseAudioResources()
         }
     }
 
-    private fun onWakeWordDetected(name: String) {
+    private fun notifyWakeWordDetected(name: String) {
         android.util.Log.i("VoiceAssistant", "Wake word detected for $name")
-        stopSpotting()
 
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
         launchIntent?.apply {
@@ -256,14 +267,7 @@ class VoiceAssistantForegroundService : Service() {
         }
     }
 
-    /** Stops the audio loop only — the foreground service/notification stays
-     * up. Call [startSpotting] again (e.g. once a voice turn finishes) to
-     * resume listening. Avoids two simultaneous microphone consumers when
-     * the mic-button/VoiceConversationController path is active. */
-    private fun stopSpotting() {
-        isSpotting = false
-        recordingThread?.join(500)
-        recordingThread = null
+    private fun releaseAudioResources() {
         audioRecord?.let {
             try {
                 it.stop()
@@ -274,6 +278,23 @@ class VoiceAssistantForegroundService : Service() {
         audioRecord = null
         stream?.release()
         stream = null
+    }
+
+    /** Stops the audio loop only — the foreground service/notification stays
+     * up. Call [startSpotting] again (e.g. once a voice turn finishes) to
+     * resume listening. Avoids two simultaneous microphone consumers when
+     * the mic-button/VoiceConversationController path is active.
+     *
+     * Only ever called from a thread OTHER than the recording thread
+     * (ACTION_STOP handling, onDestroy, or a setup failure in
+     * startSpotting() before the recording thread even starts) — never
+     * from inside processSamples() itself, which owns and releases its own
+     * native resources in its `finally` block instead. */
+    private fun stopSpotting() {
+        isSpotting = false
+        recordingThread?.join(500)
+        recordingThread = null
+        releaseAudioResources()
     }
 
     private fun buildNotification(): android.app.Notification {
