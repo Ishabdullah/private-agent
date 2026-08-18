@@ -7,6 +7,9 @@ import '../services/shizuku_service.dart';
 import '../services/screen_automation_service.dart';
 import '../services/telegram_service.dart';
 import '../services/voice_assistant_foreground_service.dart';
+import '../services/voice_service.dart';
+import '../services/tts_settings_service.dart';
+import '../models/tts_settings.dart';
 import 'task_history_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -17,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
   final ShizukuService shizukuService;
   final ScreenAutomationService screenAutomationService;
   final TelegramService telegramService;
+  final VoiceService voiceService;
 
   const SettingsScreen({
     super.key,
@@ -24,6 +28,7 @@ class SettingsScreen extends StatefulWidget {
     required this.shizukuService,
     required this.screenAutomationService,
     required this.telegramService,
+    required this.voiceService,
   });
 
   @override
@@ -47,6 +52,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _floatingIconEnabled = false;
   bool _isOverlayPermissionGranted = false;
   bool _voiceAssistantListening = false;
+
+  final TtsSettingsService _ttsSettingsService = TtsSettingsService();
+  TtsSettings _ttsSettings = const TtsSettings();
+  List<Map<String, String>> _availableVoices = [];
+  bool _voicesLoaded = false;
 
   final Map<String, PermissionStatus> _permissions = {};
 
@@ -82,6 +92,26 @@ class _SettingsScreenState extends State<SettingsScreen>
       _checkOverlayStatus();
     }
     _checkVoiceAssistantStatus();
+    _loadTtsSettings();
+  }
+
+  Future<void> _loadTtsSettings() async {
+    final settings = await _ttsSettingsService.loadSettings();
+    await widget.voiceService.applyTtsSettings(settings);
+    final voices = await widget.voiceService.getVoices();
+    if (mounted) {
+      setState(() {
+        _ttsSettings = settings;
+        _availableVoices = voices;
+        _voicesLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _saveTtsSettings(TtsSettings settings) async {
+    setState(() => _ttsSettings = settings);
+    await _ttsSettingsService.saveSettings(settings);
+    await widget.voiceService.applyTtsSettings(settings);
   }
 
   Future<void> _checkVoiceAssistantStatus() async {
@@ -799,6 +829,128 @@ class _SettingsScreenState extends State<SettingsScreen>
                   setState(() => _voiceAssistantListening = value);
                 },
                 contentPadding: EdgeInsets.zero,
+              ),
+            ],
+          ),
+
+          // 4c. Text-to-speech voice/rate/pitch/volume (Phase 8).
+          _buildSettingsCard(
+            icon: Icons.record_voice_over_outlined,
+            title: 'Spoken Responses',
+            subtitle: 'Voice, speed, pitch, and volume for TTS playback',
+            isDark: isDark,
+            children: [
+              Text(
+                'Speed: ${_ttsSettings.rate.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+              ),
+              Slider(
+                value: _ttsSettings.rate,
+                min: 0.0,
+                max: 1.0,
+                divisions: 20,
+                label: _ttsSettings.rate.toStringAsFixed(2),
+                onChanged: (value) {
+                  setState(() => _ttsSettings = _ttsSettings.copyWith(rate: value));
+                },
+                onChangeEnd: (value) => _saveTtsSettings(_ttsSettings),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Pitch: ${_ttsSettings.pitch.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+              ),
+              Slider(
+                value: _ttsSettings.pitch,
+                min: 0.0,
+                max: 2.0,
+                divisions: 20,
+                label: _ttsSettings.pitch.toStringAsFixed(2),
+                onChanged: (value) {
+                  setState(() => _ttsSettings = _ttsSettings.copyWith(pitch: value));
+                },
+                onChangeEnd: (value) => _saveTtsSettings(_ttsSettings),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Volume: ${_ttsSettings.volume.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+              ),
+              Slider(
+                value: _ttsSettings.volume,
+                min: 0.0,
+                max: 1.0,
+                divisions: 20,
+                label: _ttsSettings.volume.toStringAsFixed(2),
+                onChanged: (value) {
+                  setState(() => _ttsSettings = _ttsSettings.copyWith(volume: value));
+                },
+                onChangeEnd: (value) => _saveTtsSettings(_ttsSettings),
+              ),
+              const SizedBox(height: 12),
+              if (!_voicesLoaded)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                )
+              else if (_availableVoices.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'No alternate voices reported by this device — using the '
+                    'system default voice.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                )
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: _ttsSettings.voiceName,
+                  decoration: _buildInputDecoration(
+                    labelText: 'Voice',
+                    hintText: 'Device default',
+                    prefixIcon: const Icon(Icons.person_outline, size: 18),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Device default'),
+                    ),
+                    ..._availableVoices.map(
+                      (v) => DropdownMenuItem<String>(
+                        value: v['name'],
+                        child: Text(
+                          '${v['name']} (${v['locale']})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                  onChanged: (name) {
+                    final selected = _availableVoices.firstWhere(
+                      (v) => v['name'] == name,
+                      orElse: () => {'name': '', 'locale': ''},
+                    );
+                    final settings = name == null
+                        ? _ttsSettings.copyWith(clearVoice: true)
+                        : _ttsSettings.copyWith(
+                            voiceName: name,
+                            voiceLocale: selected['locale'],
+                          );
+                    _saveTtsSettings(settings);
+                  },
+                ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                  label: const Text('Test voice'),
+                  onPressed: () {
+                    widget.voiceService.speak(
+                      "Hi, this is how I'll sound when I respond.",
+                    );
+                  },
+                ),
               ),
             ],
           ),

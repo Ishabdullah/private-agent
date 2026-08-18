@@ -19,7 +19,7 @@ The system operates on a continuous feedback loop:
 - **Screen Reading:** Parses the Android UI tree to map clickable, scrollable, and editable elements.
 - **Coordinate-Based Interaction:** Simulates physical screen taps based on coordinate geometry, mitigating issues with missing text labels or inaccessible icons.
 - **Remote Access:** Integrates with the Telegram Bot API via background polling, allowing users to issue commands and monitor task execution progress remotely.
-- **Voice Control:** Native speech-to-text/text-to-speech for hands-free operation. Tap the mic, speak your request, and the agent replies out loud. If the agent's reply sounds like a follow-up question, the mic automatically reopens for your answer without needing another tap.
+- **Voice Control:** Native speech-to-text/text-to-speech for hands-free operation. Tap the mic, speak your request, and the agent replies out loud — action results, task-progress checkpoints, and errors are all spoken, not just plain chat replies, and risky actions (sending an SMS, making a call) ask for a spoken yes/no confirmation first. If the agent's reply sounds like a follow-up question, the mic automatically reopens for your answer without needing another tap. Voice speed, pitch, volume, and the TTS voice itself are configurable in **Settings → Spoken Responses**.
 - **Wake-Word Assistant (Beta):** Say "Hey [name]" to trigger a voice command without touching the screen — fully offline, on-device keyword detection. See [Wake-word voice assistant](#wake-word-voice-assistant-beta) below for supported names and setup.
 
 ## Security & Privacy

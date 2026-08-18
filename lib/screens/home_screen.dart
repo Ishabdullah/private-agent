@@ -598,6 +598,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     shizukuService: _actionHandler.shizuku,
                     screenAutomationService: _actionHandler.screenAutomation,
                     telegramService: _telegramService,
+                    voiceService: _voiceService,
                   ),
                 ),
               );
@@ -670,6 +671,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 screenAutomationService:
                                     _actionHandler.screenAutomation,
                                 telegramService: _telegramService,
+                                voiceService: _voiceService,
                               ),
                             ),
                           );
@@ -1019,6 +1021,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     shizukuService: _actionHandler.shizuku,
                     screenAutomationService: _actionHandler.screenAutomation,
                     telegramService: _telegramService,
+                    voiceService: _voiceService,
                   ),
                 ),
               );

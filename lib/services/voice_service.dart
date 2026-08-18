@@ -1,6 +1,7 @@
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import '../models/tts_settings.dart';
 
 /// Which `speech_to_text` listen mode to use for a capture.
 ///
@@ -17,23 +18,68 @@ class VoiceService {
   final FlutterTts _tts = FlutterTts();
   bool _isInitialized = false;
   bool _isListening = false;
+  bool _ttsConfigured = false;
 
   bool get isListening => _isListening;
 
   Future<void> init() async {
-    if (_isInitialized) return;
+    // TTS configuration is independent of STT init succeeding — if the
+    // speech recognizer fails to initialize (e.g. no RecognitionService on
+    // this device), speak() should still work with sane defaults rather
+    // than silently using flutter_tts's unconfigured engine defaults.
+    if (!_ttsConfigured) {
+      await applyTtsSettings(const TtsSettings());
+    }
 
+    if (_isInitialized) return;
     _isInitialized = await _speech.initialize(
       onError: (error) {
         _isListening = false;
       },
     );
+  }
 
-    // Configure TTS
-    await _tts.setLanguage('en-US');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setVolume(1.0);
-    await _tts.setPitch(1.0);
+  /// Applies user-configured rate/pitch/volume/voice to the TTS engine.
+  /// Safe to call again any time settings change — does not touch STT.
+  Future<void> applyTtsSettings(TtsSettings settings) async {
+    await _tts.setLanguage(settings.language);
+    await _tts.setSpeechRate(settings.rate);
+    await _tts.setVolume(settings.volume);
+    await _tts.setPitch(settings.pitch);
+    if (settings.voiceName != null) {
+      try {
+        await _tts.setVoice({
+          'name': settings.voiceName!,
+          'locale': settings.voiceLocale ?? settings.language,
+        });
+      } catch (_) {
+        // Voice may no longer exist on this device (engine changed, OS
+        // update) — fall back to the language default rather than throwing.
+      }
+    }
+    _ttsConfigured = true;
+  }
+
+  /// Lists voices the on-device TTS engine reports, as raw
+  /// `{"name": ..., "locale": ...}` maps (flutter_tts's own shape) — the
+  /// available set is engine/OS-dependent and can legitimately be empty.
+  Future<List<Map<String, String>>> getVoices() async {
+    try {
+      final raw = await _tts.getVoices;
+      if (raw is! List) return [];
+      return raw
+          .whereType<Map>()
+          .map(
+            (v) => {
+              'name': (v['name'] ?? '').toString(),
+              'locale': (v['locale'] ?? '').toString(),
+            },
+          )
+          .where((v) => v['name']!.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   /// Start listening for speech. Returns transcribed text via callback.
@@ -85,10 +131,51 @@ class VoiceService {
     await _speech.stop();
   }
 
-  /// Speak text aloud
+  /// Speak text aloud. Strips markdown/URLs/emoji first — the LLM is asked
+  /// for TTS-friendly output (`voiceResponseStyle`) but nothing enforces
+  /// that, and typed-chat replies aren't asked at all, so this is the one
+  /// choke point every spoken string passes through.
   Future<void> speak(String text) async {
-    if (text.isEmpty) return;
-    await _tts.speak(text);
+    if (!_ttsConfigured) await applyTtsSettings(const TtsSettings());
+    final clean = sanitizeForSpeech(text);
+    if (clean.isEmpty) return;
+    await _tts.speak(clean);
+  }
+
+  /// Strips markdown formatting, code spans/fences, bare URLs, and emoji
+  /// from [text] so a TTS engine doesn't read punctuation/syntax aloud.
+  /// Pure and side-effect-free so it's directly unit-testable.
+  static String sanitizeForSpeech(String text) {
+    var result = text;
+    // Fenced code blocks (```...```) — drop entirely, code isn't speakable.
+    result = result.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
+    // Inline code spans: `code` -> code
+    result = result.replaceAllMapped(
+      RegExp(r'`([^`]*)`'),
+      (m) => m.group(1) ?? '',
+    );
+    // Markdown links/images: [text](url) -> text, ![alt](url) -> alt
+    result = result.replaceAllMapped(
+      RegExp(r'!?\[([^\]]*)\]\([^)]*\)'),
+      (m) => m.group(1) ?? '',
+    );
+    // Bare URLs.
+    result = result.replaceAll(RegExp(r'https?://\S+'), '');
+    // Bold/italic/strikethrough markers.
+    result = result.replaceAll(RegExp(r'(\*\*\*|\*\*|\*|__|~~|_)'), '');
+    // Markdown headers/blockquote/list markers at line start.
+    result = result.replaceAll(RegExp(r'^\s{0,3}[#>*-]+\s*', multiLine: true), '');
+    // Emoji and other pictographic symbols.
+    result = result.replaceAll(
+      RegExp(
+        r'[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]',
+        unicode: true,
+      ),
+      '',
+    );
+    // Collapse all whitespace (including newlines left by removed blocks)
+    // into single spaces — TTS engines don't need line breaks preserved.
+    return result.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   /// Stop speaking
