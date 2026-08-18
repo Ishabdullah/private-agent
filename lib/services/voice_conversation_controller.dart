@@ -13,6 +13,7 @@ enum VoiceConversationState {
   thinking,
   speaking,
   continuingConversation,
+  confirming,
 }
 
 /// Orchestrates a voice turn: capture speech → send to the existing agent
@@ -36,13 +37,19 @@ class VoiceConversationController {
   /// chat bubble immediately instead of waiting for the whole turn.
   final void Function(String transcript)? onTranscript;
 
+  /// Called with interim (non-final) transcript text while the user is still
+  /// speaking, in [VoiceListenMode.dictation] turns only — lets a caller show
+  /// live transcription. Never called for [VoiceListenMode.confirmation].
+  final void Function(String partialTranscript)? onPartialTranscript;
+
   /// Called with the final spoken response text of a turn (after any action
   /// has run), so a caller can also render it as text if desired.
   final void Function(String response, {required bool success})? onResponse;
 
-  /// Forwarded to `ActionHandler.execute` for multi-step task progress
-  /// narration in the UI. Not spoken aloud by default — speaking every
-  /// intermediate step would be noisy; only the final result is spoken.
+  /// Called with every `TaskExecutor`/`ActionHandler` progress message, for
+  /// UI text rendering — same unfiltered stream the chat UI already shows.
+  /// A separate, throttled subset of these is also spoken aloud via TTS at
+  /// sensible checkpoints (see `_maybeNarrateProgress`), not verbatim.
   final void Function(String message)? onProgress;
 
   /// How long to wait for a transcript before giving up and returning to
@@ -60,16 +67,31 @@ class VoiceConversationController {
     required this.voiceService,
     this.onStateChanged,
     this.onTranscript,
+    this.onPartialTranscript,
     this.onResponse,
     this.onProgress,
     this.initialListenTimeout = const Duration(seconds: 20),
     this.followUpListenTimeout = const Duration(seconds: 10),
   });
 
+  /// Actions considered risky enough to confirm before running when
+  /// triggered by voice — a misheard/mistranscribed word is a more likely
+  /// source of an unintended send/call than a deliberate typed message or
+  /// mic-button tap (plan Section 19).
+  static const Set<String> _destructiveVoiceActions = {'send_sms', 'make_call'};
+
   VoiceConversationState _state = VoiceConversationState.idle;
   VoiceConversationState get state => _state;
 
   bool _cancelled = false;
+  VoiceListenMode _activeMode = VoiceListenMode.confirmation;
+
+  // Progress-narration throttling state for the current turn — reset in
+  // startTurn(). See _maybeNarrateProgress for the "sensible checkpoints,
+  // not every step" policy (plan Section 12).
+  bool _progressStartAnnounced = false;
+  int _progressStepsSeen = 0;
+  static const int _narrateEveryNSteps = 4;
 
   void _setState(VoiceConversationState next) {
     _state = next;
@@ -77,12 +99,20 @@ class VoiceConversationController {
   }
 
   /// Starts a voice turn. No-op if a turn is already in progress.
-  Future<void> startTurn() async {
+  ///
+  /// [mode] defaults to [VoiceListenMode.confirmation] (the existing
+  /// push-to-talk behavior). Wake-word-triggered turns should pass
+  /// [VoiceListenMode.dictation] for longer, conversational captures with
+  /// live partial transcription via [onPartialTranscript].
+  Future<void> startTurn({VoiceListenMode mode = VoiceListenMode.confirmation}) async {
     if (_state != VoiceConversationState.idle &&
         _state != VoiceConversationState.continuingConversation) {
       return;
     }
     _cancelled = false;
+    _activeMode = mode;
+    _progressStartAnnounced = false;
+    _progressStepsSeen = 0;
     _setState(VoiceConversationState.woken);
     await _listenAndRespond(timeout: initialListenTimeout);
   }
@@ -118,6 +148,7 @@ class VoiceConversationController {
       await for (final chunk in aiService.sendMessageStream(
         transcript,
         isAgentMode: true,
+        voiceResponseStyle: true,
       )) {
         accumulated.write(chunk);
       }
@@ -125,17 +156,29 @@ class VoiceConversationController {
 
       final AgentAction? action = aiService.parseAction(text);
       if (action != null) {
-        final result = await actionHandler.execute(
-          action,
-          aiService: aiService,
-          onProgress: onProgress,
-        );
-        success = result.success;
-        spokenResponse = action.response.isNotEmpty
-            ? action.response
-            : (result.details ?? (success ? 'Done.' : 'Something went wrong.'));
-        if (!success && result.details != null && action.response.isNotEmpty) {
-          spokenResponse = '${action.response}. ${result.details}';
+        bool proceed = true;
+        if (_destructiveVoiceActions.contains(action.action)) {
+          proceed = await _confirmDestructiveAction(action);
+          if (_cancelled) return;
+          _setState(VoiceConversationState.thinking);
+        }
+
+        if (!proceed) {
+          success = true;
+          spokenResponse = "Okay, I won't do that.";
+        } else {
+          final result = await actionHandler.execute(
+            action,
+            aiService: aiService,
+            onProgress: _handleProgress,
+          );
+          success = result.success;
+          spokenResponse = action.response.isNotEmpty
+              ? action.response
+              : (result.details ?? (success ? 'Done.' : 'Something went wrong.'));
+          if (!success && result.details != null && action.response.isNotEmpty) {
+            spokenResponse = '${action.response}. ${result.details}';
+          }
         }
       } else {
         spokenResponse = text.trim().isEmpty
@@ -163,16 +206,96 @@ class VoiceConversationController {
     }
   }
 
-  Future<String?> _captureTranscript({required Duration timeout}) async {
+  /// Speaks a confirmation prompt for a risky action and listens for a
+  /// yes/no reply. Returns `false` (safe default) on timeout, cancellation,
+  /// or anything that doesn't read as an affirmative.
+  Future<bool> _confirmDestructiveAction(AgentAction action) async {
+    _setState(VoiceConversationState.confirming);
+    final description = action.response.trim();
+    final prompt = description.isNotEmpty
+        ? '$description. Say yes to confirm, or no to cancel.'
+        : 'Are you sure? Say yes to confirm, or no to cancel.';
+    await voiceService.speak(prompt);
+    if (_cancelled) return false;
+
+    final reply = await _captureTranscript(
+      timeout: followUpListenTimeout,
+      mode: VoiceListenMode.confirmation,
+    );
+    if (_cancelled) return false;
+    return _isAffirmative(reply);
+  }
+
+  static const List<String> _affirmativeWords = [
+    'yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'sure', 'go ahead', 'do it', 'ok', 'okay',
+  ];
+
+  bool _isAffirmative(String? text) {
+    if (text == null || text.trim().isEmpty) return false;
+    final normalized = ' ${text.toLowerCase().trim()} ';
+    return _affirmativeWords.any((word) => normalized.contains(' $word '));
+  }
+
+  /// Forwards every progress message to [onProgress] (unfiltered, for UI
+  /// text rendering) and separately decides whether this particular message
+  /// is worth speaking aloud.
+  void _handleProgress(String message) {
+    onProgress?.call(message);
+    _maybeNarrateProgress(message);
+  }
+
+  /// Speaks a small number of "still working" checkpoints during a
+  /// multi-step task instead of every `onProgress` message — narrating all
+  /// of `TaskExecutor`'s per-step output (clicks, retries, recovery
+  /// attempts) verbatim would be unusable over TTS (plan Section 12).
+  /// Terminal messages (complete/cancelled/stuck) are skipped here since the
+  /// turn's own final result is already spoken separately.
+  void _maybeNarrateProgress(String message) {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) return;
+    final lower = trimmed.toLowerCase();
+
+    if (lower.startsWith('task complete') ||
+        lower.startsWith('task cancelled') ||
+        lower.contains('reached maximum steps') ||
+        lower.contains('stuck')) {
+      return;
+    }
+
+    if (!_progressStartAnnounced && lower.startsWith('starting task')) {
+      _progressStartAnnounced = true;
+      unawaited(voiceService.speak('On it.'));
+      return;
+    }
+
+    if (!RegExp(r'^step \d+:', caseSensitive: false).hasMatch(trimmed)) {
+      return; // only step checkpoints are candidates — skip retry/recovery noise
+    }
+    _progressStepsSeen++;
+    if (_progressStepsSeen % _narrateEveryNSteps == 0) {
+      unawaited(voiceService.speak('Still working, step $_progressStepsSeen.'));
+    }
+  }
+
+  Future<String?> _captureTranscript({
+    required Duration timeout,
+    VoiceListenMode? mode,
+  }) async {
     final completer = Completer<String?>();
+    String latestPartial = '';
 
     try {
       await voiceService.startListening(
+        mode: mode ?? _activeMode,
         onResult: (text) {
           if (!completer.isCompleted) completer.complete(text);
         },
         onDone: () {
           if (!completer.isCompleted) completer.complete(null);
+        },
+        onPartialResult: (text) {
+          latestPartial = text;
+          onPartialTranscript?.call(text);
         },
       );
     } catch (_) {
@@ -183,7 +306,11 @@ class VoiceConversationController {
       timeout,
       onTimeout: () async {
         await voiceService.stopListening();
-        return null;
+        // Dictation mode may not have emitted a `finalResult` by the
+        // timeout (e.g. the user kept talking past pauseFor without ever
+        // going fully silent) — fall back to the latest partial rather than
+        // discarding a perfectly good transcript.
+        return latestPartial.trim().isNotEmpty ? latestPartial : null;
       },
     );
   }

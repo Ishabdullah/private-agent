@@ -79,7 +79,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// rewrite" design decision).
   void _onWakeWordDetected(String assistantName) {
     if (_voiceController.state != VoiceConversationState.idle) return;
-    unawaited(_voiceController.startTurn());
+    // Dictation mode: wake-word turns are conversational commands, not the
+    // short push-to-talk utterances the mic button expects, so they get the
+    // longer, pause-tolerant capture instead of `confirmation` mode.
+    unawaited(_voiceController.startTurn(mode: VoiceListenMode.dictation));
   }
 
   Future<void> _initServices() async {
@@ -341,7 +344,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _isListening = state == VoiceConversationState.woken ||
           state == VoiceConversationState.listening ||
           state == VoiceConversationState.transcribing ||
-          state == VoiceConversationState.continuingConversation;
+          state == VoiceConversationState.continuingConversation ||
+          state == VoiceConversationState.confirming;
       _isLoading = state == VoiceConversationState.thinking ||
           state == VoiceConversationState.speaking;
     });

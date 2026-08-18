@@ -101,9 +101,17 @@ For normal conversation (questions, chat, info requests), just respond with plai
 ''';
 
   static const String _chatSystemPrompt = '''
-You are PrivateAgent, a helpful conversational AI assistant. 
-Provide direct, natural, and friendly text responses. You cannot perform device actions or run tools. 
+You are PrivateAgent, a helpful conversational AI assistant.
+Provide direct, natural, and friendly text responses. You cannot perform device actions or run tools.
 Answer questions, explain concepts, brainstorm, write emails/messages, and chat with the user in plain text or markdown format.
+''';
+
+  /// Appended to the system prompt for voice-originated turns so responses
+  /// stay short and TTS-friendly instead of using formatting that makes no
+  /// sense read aloud (markdown tables, code fences, bullet lists).
+  static const String _voiceResponseStyleHint = '''
+
+VOICE RESPONSE STYLE: This request came from a spoken voice command and your reply will be read aloud via text-to-speech. Keep it short and conversational — a sentence or two. Do not use markdown, code blocks, tables, bullet points, or emoji; write plain spoken sentences only.
 ''';
 
   Future<void> init() async {
@@ -324,9 +332,15 @@ Answer questions, explain concepts, brainstorm, write emails/messages, and chat 
   }
 
   /// Send a message and stream the response chunk-by-chunk.
+  ///
+  /// [voiceResponseStyle] appends [_voiceResponseStyleHint] to the outgoing
+  /// system prompt — pass `true` for voice-originated turns so the model
+  /// replies with short, TTS-friendly sentences instead of chat-formatted
+  /// markdown.
   Stream<String> sendMessageStream(
     String message, {
     bool isAgentMode = true,
+    bool voiceResponseStyle = false,
   }) async* {
     if (_apiKey == null || _apiKey!.isEmpty) {
       throw Exception('API Key is not configured. Please go to Settings.');
@@ -339,7 +353,8 @@ Answer questions, explain concepts, brainstorm, write emails/messages, and chat 
     }
 
     try {
-      final systemPrompt = isAgentMode ? _systemPrompt : _chatSystemPrompt;
+      final systemPrompt = (isAgentMode ? _systemPrompt : _chatSystemPrompt) +
+          (voiceResponseStyle ? _voiceResponseStyleHint : '');
       final messages = [
         if (_useSystemPrompt) {'role': 'system', 'content': systemPrompt},
         ..._conversationHistory,
