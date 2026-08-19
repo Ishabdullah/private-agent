@@ -23,6 +23,17 @@ class VoiceService {
   bool get isListening => _isListening;
 
   Future<void> init() async {
+    // Without this, `await _tts.speak(...)` resolves as soon as playback
+    // *starts*, not when it finishes — any caller that starts listening
+    // right after `await speak(...)` (e.g. the destructive-action
+    // confirmation prompt, or a follow-up-question re-listen) would start
+    // recording while the TTS was still talking, and the mic's
+    // silence-based cutoff would then end the capture before the user got
+    // a chance to actually respond. Device-reported symptom: the
+    // confirmation prompt's yes/no capture ended before the user could
+    // answer.
+    await _tts.awaitSpeakCompletion(true);
+
     // TTS configuration is independent of STT init succeeding — if the
     // speech recognizer fails to initialize (e.g. no RecognitionService on
     // this device), speak() should still work with sane defaults rather

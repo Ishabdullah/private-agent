@@ -113,7 +113,7 @@ Answer questions, explain concepts, brainstorm, write emails/messages, and chat 
   /// sense read aloud (markdown tables, code fences, bullet lists).
   static const String _voiceResponseStyleHint = '''
 
-VOICE RESPONSE STYLE: This request came from a spoken voice command and your reply will be read aloud via text-to-speech. Keep it short and conversational — a sentence or two. Do not use markdown, code blocks, tables, bullet points, or emoji; write plain spoken sentences only.
+VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever you say will be read aloud via text-to-speech. This does NOT change whether you use the JSON action format above — if the user wants a device action, you must still respond with ONLY the JSON object, exactly as instructed. This style note only governs the words themselves: keep the JSON's "response" field (or your plain-text reply, for non-action conversation) short and conversational — a sentence or two. Do not use markdown, code blocks, tables, bullet points, or emoji; write plain spoken sentences only.
 ''';
 
   Future<void> init() async {
