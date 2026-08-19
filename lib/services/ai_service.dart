@@ -63,8 +63,10 @@ class AiService {
   static const String _systemPrompt = '''
 You are PrivateAgent, a helpful AI assistant that controls an Android phone. You can perform device actions and also have normal conversations.
 
-When the user wants to perform a device action, you MUST respond with ONLY a JSON object (no markdown, no code fences, no extra text) in this exact format:
+When the user wants to perform a device action, you MUST respond with ONLY a JSON object (no markdown, no code fences, no extra text, no narration before or after it) in this exact format:
 {"action": "action_name", "params": {"key": "value"}, "response": "What you say to the user"}
+
+Do NOT invent your own tool-calling syntax (no <tool_call> tags, no XML, no function-call blocks of any kind). The JSON object above is the ONLY valid way to trigger an action. Put anything you'd normally say to the user in the JSON's "response" field, not as separate text.
 
 Available actions and their params:
 
@@ -586,7 +588,14 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and your rep
     }
   }
 
-  /// Parse the AI response to check if it's an action or plain text
+  /// Parse the AI response to check if it's an action or plain text.
+  ///
+  /// Tries strict JSON first (the format the system prompt asks for), then
+  /// falls back to [_parseToolCallTagAction] for models that ignore that
+  /// instruction and emit their own baked-in `<tool_call>` tool-calling
+  /// syntax instead (observed in practice — some instruction-tuned models
+  /// default to this even when told to respond with plain JSON, especially
+  /// when the request doesn't use the API's native `tools` parameter).
   AgentAction? parseAction(String response) {
     // Try to parse as JSON action
     try {
@@ -627,7 +636,42 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and your rep
     } catch (_) {
       // Not JSON, it's plain text conversation
     }
-    return null;
+    return _parseToolCallTagAction(response);
+  }
+
+  /// Recognizes `<tool_call>action_name<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>`,
+  /// converting it into the same [AgentAction] shape the JSON format
+  /// produces. Any narration the model wrote before the tag (e.g. "I'll
+  /// send that text to Mom right away.") is used as [AgentAction.response]
+  /// so the user still sees/hears that sentence instead of losing it.
+  AgentAction? _parseToolCallTagAction(String response) {
+    final tagMatch = RegExp(
+      r'<tool_call>([\s\S]*?)</tool_call>',
+    ).firstMatch(response);
+    if (tagMatch == null) return null;
+
+    final inner = tagMatch.group(1)!.trim();
+    final nameMatch = RegExp(r'^([a-zA-Z_][a-zA-Z0-9_]*)').firstMatch(inner);
+    final actionName = nameMatch?.group(1);
+    if (actionName == null || actionName.isEmpty) return null;
+
+    final params = <String, dynamic>{};
+    final argRegex = RegExp(
+      r'<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>',
+      dotAll: true,
+    );
+    for (final m in argRegex.allMatches(inner)) {
+      final key = m.group(1)!.trim();
+      final rawValue = m.group(2)!.trim();
+      // Actions like set_alarm/set_volume/set_brightness cast numeric
+      // params directly (`as num?`), which throws on a String rather than
+      // failing gracefully — coerce numeric-looking values here so the
+      // fallback path doesn't crash executing what it just parsed.
+      params[key] = num.tryParse(rawValue) ?? rawValue;
+    }
+
+    final narration = response.substring(0, tagMatch.start).trim();
+    return AgentAction(action: actionName, params: params, response: narration);
   }
 
   /// Fetches available models from the provider's /models endpoint
