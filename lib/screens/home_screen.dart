@@ -68,6 +68,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Register as the handler for overlay bubble tasks
     onOverlayTask = (task) => _sendMessage(task);
     VoiceAssistantForegroundService.onWakeWordDetected = _onWakeWordDetected;
+    // Phase 9 (optional/additive): the OS invoking us as the system
+    // assistant (long-press home) is just another automatic trigger for
+    // the same voice-turn path the wake word and mic button already use —
+    // `_onWakeWordDetected` doesn't actually read its argument, so this is
+    // a direct reuse, not a parallel implementation.
+    VoiceAssistantForegroundService.onAssistantGestureInvoked =
+        (name) => _onWakeWordDetected(name ?? '');
     VoiceAssistantForegroundService.ensureHandlerRegistered();
   }
 

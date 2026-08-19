@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,7 +10,9 @@ import '../services/telegram_service.dart';
 import '../services/voice_assistant_foreground_service.dart';
 import '../services/voice_service.dart';
 import '../services/tts_settings_service.dart';
+import '../services/wake_word_settings_service.dart';
 import '../models/tts_settings.dart';
+import '../models/wake_word_config.dart';
 import 'task_history_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -58,6 +61,16 @@ class _SettingsScreenState extends State<SettingsScreen>
   List<Map<String, String>> _availableVoices = [];
   bool _voicesLoaded = false;
 
+  final WakeWordSettingsService _wakeWordSettingsService =
+      WakeWordSettingsService();
+  WakeWordConfig? _wakeWordConfig;
+  bool _isTestingWakeWord = false;
+  bool? _wakeWordTestPassed;
+  String? _wakeWordTestHeard;
+
+  bool _assistantRoleAvailable = false;
+  bool _isDefaultAssistant = false;
+
   final Map<String, PermissionStatus> _permissions = {};
 
   @override
@@ -93,6 +106,84 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
     _checkVoiceAssistantStatus();
     _loadTtsSettings();
+    _loadWakeWordConfig();
+    _checkAssistantRoleStatus();
+  }
+
+  /// Phase 9 (optional/additive): re-checked on resume too (see
+  /// [didChangeAppLifecycleState]) since granting/revoking the assistant
+  /// role happens in a system Settings screen this app doesn't control.
+  Future<void> _checkAssistantRoleStatus() async {
+    final available = await widget.screenAutomationService
+        .isAssistantRoleAvailable();
+    final isDefault = await widget.screenAutomationService
+        .isDefaultAssistant();
+    if (mounted) {
+      setState(() {
+        _assistantRoleAvailable = available;
+        _isDefaultAssistant = isDefault;
+      });
+    }
+  }
+
+  Future<void> _loadWakeWordConfig() async {
+    final config = await _wakeWordSettingsService.loadConfig();
+    if (mounted) setState(() => _wakeWordConfig = config);
+  }
+
+  /// Persists a changed [WakeWordConfig] and, if background listening is
+  /// currently on, restarts the foreground service so the change (a new
+  /// name or sensitivity) takes effect immediately instead of silently
+  /// waiting for the next manual toggle — `VoiceAssistantForegroundService`
+  /// only re-reads config when a fresh service instance is created.
+  Future<void> _saveWakeWordConfig(WakeWordConfig config) async {
+    setState(() => _wakeWordConfig = config);
+    await _wakeWordSettingsService.saveConfig(config);
+    if (_voiceAssistantListening) {
+      await VoiceAssistantForegroundService.stop();
+      await VoiceAssistantForegroundService.start();
+    }
+  }
+
+  Future<void> _runWakeWordRetest() async {
+    final config = _wakeWordConfig;
+    if (config == null) return;
+    setState(() {
+      _isTestingWakeWord = true;
+      _wakeWordTestPassed = null;
+      _wakeWordTestHeard = null;
+    });
+
+    final completer = Completer<String?>();
+    try {
+      await widget.voiceService.startListening(
+        onResult: (text) {
+          if (!completer.isCompleted) completer.complete(text);
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete(null);
+        },
+      );
+    } catch (_) {
+      if (!completer.isCompleted) completer.complete(null);
+    }
+    final heard = await completer.future.timeout(
+      const Duration(seconds: 12),
+      onTimeout: () async {
+        await widget.voiceService.stopListening();
+        return null;
+      },
+    );
+
+    if (!mounted) return;
+    final passed =
+        heard != null &&
+        heard.toLowerCase().contains(config.assistantName.toLowerCase());
+    setState(() {
+      _isTestingWakeWord = false;
+      _wakeWordTestHeard = heard;
+      _wakeWordTestPassed = passed;
+    });
   }
 
   Future<void> _loadTtsSettings() async {
@@ -155,6 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       if (FeatureFlags.floatingOverlayEnabled) {
         _checkOverlayStatus();
       }
+      _checkAssistantRoleStatus();
     }
   }
 
@@ -165,6 +257,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       'Phone': Permission.phone,
       'SMS': Permission.sms,
       'Notifications': Permission.notification,
+      'Battery Optimization': Permission.ignoreBatteryOptimizations,
     };
 
     for (final entry in perms.entries) {
@@ -833,6 +926,19 @@ class _SettingsScreenState extends State<SettingsScreen>
             ],
           ),
 
+          // 4b2. Wake Word identity/sensitivity — Section 9's Settings card,
+          // built out in Phase 10 (previously only editable during
+          // onboarding, with no way to change the name or tune sensitivity
+          // afterward).
+          if (_wakeWordConfig != null) _buildWakeWordCard(isDark),
+
+          // 4b3. Default Assistant (optional) — Phase 9. Only shown when
+          // the device actually exposes ROLE_ASSISTANT; discoverable from
+          // Settings rather than pushed during onboarding, per the plan's
+          // Section 11 guidance (a system permission dialog most users
+          // would decline if forced up front).
+          if (_assistantRoleAvailable) _buildDefaultAssistantCard(isDark),
+
           // 4c. Text-to-speech voice/rate/pitch/volume (Phase 8).
           _buildSettingsCard(
             icon: Icons.record_voice_over_outlined,
@@ -1090,6 +1196,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       'Phone': Permission.phone,
       'SMS': Permission.sms,
       'Notifications': Permission.notification,
+      'Battery Optimization': Permission.ignoreBatteryOptimizations,
     };
 
     final icons = {
@@ -1098,6 +1205,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       'Phone': Icons.phone,
       'SMS': Icons.sms,
       'Notifications': Icons.notifications,
+      'Battery Optimization': Icons.battery_charging_full_rounded,
     };
 
     final list = permissionMap.entries.map((entry) {
@@ -1167,6 +1275,196 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
 
     return list;
+  }
+
+  /// Section 9's "Settings → Wake Word card" spec: current name/phrase
+  /// (editable), enable/disable, sensitivity, re-test, and an engine/tier
+  /// indicator. The sensitivity slider is meaningful here (unlike the
+  /// plan's original "hidden for Tier 2b" caveat, which was written before
+  /// the Phase 5 sherpa-onnx decision) — it's wired to sherpa-onnx's
+  /// `keywordsThreshold` natively in `VoiceAssistantForegroundService`.
+  Widget _buildWakeWordCard(bool isDark) {
+    final config = _wakeWordConfig!;
+    return _buildSettingsCard(
+      icon: Icons.hearing_rounded,
+      title: 'Wake Word',
+      subtitle: 'Your assistant\'s name and how eagerly it listens for it',
+      isDark: isDark,
+      children: [
+        Text(
+          'Wake phrase: "Hey ${config.assistantName}"',
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Engine: offline keyword spotting (sherpa-onnx)',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? Colors.white60 : Colors.black54,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          initialValue: config.assistantName,
+          decoration: _buildInputDecoration(
+            labelText: 'Assistant name',
+            hintText: 'Pick a name',
+            prefixIcon: const Icon(Icons.badge_outlined, size: 18),
+          ),
+          items: [
+            for (final preset in WakeWordSettingsService.presetNames)
+              DropdownMenuItem<String>(value: preset, child: Text(preset)),
+          ],
+          onChanged: (name) {
+            if (name == null || name == config.assistantName) return;
+            _saveWakeWordConfig(
+              config.copyWith(
+                assistantName: name,
+                wakePhrase: 'Hey $name',
+                tier: _wakeWordSettingsService.tierForName(name),
+              ),
+            );
+          },
+        ),
+        SwitchListTile(
+          title: const Text('Wake word enabled'),
+          subtitle: const Text(
+            'When off, background listening won\'t react to the wake '
+            'phrase even if it\'s turned on above',
+          ),
+          value: config.enabled,
+          onChanged: (value) =>
+              _saveWakeWordConfig(config.copyWith(enabled: value)),
+          contentPadding: EdgeInsets.zero,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Sensitivity: ${(config.sensitivity * 100).round()}%',
+          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+        ),
+        Text(
+          'Higher means it triggers more easily but may misfire more often; '
+          'lower means fewer misfires but you may need to say it more '
+          'clearly.',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? Colors.white60 : Colors.black54,
+          ),
+        ),
+        Slider(
+          value: config.sensitivity,
+          min: 0.0,
+          max: 1.0,
+          divisions: 20,
+          label: '${(config.sensitivity * 100).round()}%',
+          onChanged: (value) {
+            setState(() => _wakeWordConfig = config.copyWith(sensitivity: value));
+          },
+          onChangeEnd: (value) =>
+              _saveWakeWordConfig(config.copyWith(sensitivity: value)),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _isTestingWakeWord ? null : _runWakeWordRetest,
+          icon: _isTestingWakeWord
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.mic_rounded, size: 18),
+          label: Text(
+            _isTestingWakeWord
+                ? 'Listening for "${config.assistantName}"...'
+                : 'Re-test wake word',
+          ),
+        ),
+        if (_wakeWordTestPassed != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(
+                _wakeWordTestPassed! ? Icons.check_circle : Icons.error_outline,
+                size: 16,
+                color: _wakeWordTestPassed! ? Colors.green : Colors.orange,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _wakeWordTestPassed!
+                      ? 'Heard: "$_wakeWordTestHeard"'
+                      : _wakeWordTestHeard == null
+                      ? 'Didn\'t hear anything — try again.'
+                      : 'Heard "$_wakeWordTestHeard", but not the wake phrase.',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Phase 9 (optional/additive, plan Section 10.1/10.3): lets long-press
+  /// -home / the assistant gesture route to PrivateAgent, via
+  /// `RoleManager.ROLE_ASSISTANT`. Deliberately opt-in and reversible —
+  /// explains what it does and how to undo it before the user ever taps
+  /// the button, rather than assuming they'll figure it out after the
+  /// system picker appears.
+  Widget _buildDefaultAssistantCard(bool isDark) {
+    return _buildSettingsCard(
+      icon: Icons.assistant_rounded,
+      title: 'Default Assistant (Optional)',
+      subtitle: 'Route long-press-home / your phone\'s assistant gesture '
+          'to PrivateAgent',
+      isDark: isDark,
+      children: [
+        Text(
+          _isDefaultAssistant
+              ? 'PrivateAgent is currently your Android assistant.'
+              : 'Not set — long-press-home currently opens your phone\'s '
+                    'usual assistant.',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: _isDefaultAssistant
+                ? (isDark ? Colors.greenAccent : Colors.green.shade700)
+                : (isDark ? Colors.white70 : Colors.black87),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'This is separate from the wake word and mic button, which '
+          'already work without this. Reliability varies by phone maker — '
+          'some (notably Samsung) may not fully hand off from their own '
+          'assistant. You can always undo this from Android\'s own '
+          'Settings → Apps → Default apps → Digital assistant app, even '
+          'if PrivateAgent is uninstalled or misbehaving.',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? Colors.white60 : Colors.black54,
+          ),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _isDefaultAssistant
+              ? null
+              : () async {
+                  await widget.screenAutomationService.requestAssistantRole();
+                  // The system picker runs in a separate task; re-check
+                  // when this screen next resumes rather than blocking on
+                  // a result here.
+                },
+          icon: const Icon(Icons.assistant_rounded, size: 18),
+          label: Text(
+            _isDefaultAssistant
+                ? 'Already set'
+                : 'Make PrivateAgent my Android Assistant',
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildShizukuCard() {

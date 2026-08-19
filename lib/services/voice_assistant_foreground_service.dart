@@ -14,6 +14,15 @@ class VoiceAssistantForegroundService {
   /// native KWS loop fires. Set this before calling [start].
   static void Function(String assistantName)? onWakeWordDetected;
 
+  /// Called (Phase 9, optional/additive) whenever the OS invokes
+  /// PrivateAgent as the system assistant — long-press home / the assistant
+  /// gesture, once the user has selected it via [requestAssistantRole] in
+  /// Settings — relayed from `AssistantInteractionSession` via
+  /// `MainActivity`. Same shape as [onWakeWordDetected] since Dart should
+  /// treat this identically: just another automatic trigger for a voice
+  /// turn, not a second pipeline (Section 7's "reuse, don't rewrite").
+  static void Function(String? assistantName)? onAssistantGestureInvoked;
+
   static bool _handlerRegistered = false;
 
   /// Registers the platform-channel handler for native → Dart calls. Must
@@ -28,6 +37,9 @@ class VoiceAssistantForegroundService {
       if (call.method == 'onWakeWordDetected') {
         final name = (call.arguments as Map?)?['assistantName'] as String?;
         if (name != null) onWakeWordDetected?.call(name);
+      } else if (call.method == 'onAssistantGestureInvoked') {
+        final name = (call.arguments as Map?)?['assistantName'] as String?;
+        onAssistantGestureInvoked?.call(name);
       }
     });
   }

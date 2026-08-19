@@ -25,11 +25,13 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         handleWakeWordIntent(intent)
+        handleAssistantInteractionIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleWakeWordIntent(intent)
+        handleAssistantInteractionIntent(intent)
     }
 
     private fun handleWakeWordIntent(intent: Intent?) {
@@ -42,6 +44,22 @@ class MainActivity : FlutterActivity() {
         window.decorView.post {
             voiceAssistantChannel?.invokeMethod(
                 "onWakeWordDetected",
+                mapOf("assistantName" to name),
+            )
+        }
+    }
+
+    /** Phase 9: the OS invoked PrivateAgent as the system assistant (long
+     * -press home / assistant gesture) via [AssistantInteractionSession].
+     * Dart's `_onWakeWordDetected` handler is reused for this exact same
+     * "start a voice turn" behavior -- see
+     * `VoiceAssistantForegroundService.onAssistantGestureInvoked`. */
+    private fun handleAssistantInteractionIntent(intent: Intent?) {
+        if (intent?.action != AssistantInteractionSession.ACTION_ASSISTANT_INTERACTION) return
+        val name = intent.getStringExtra(AssistantInteractionSession.EXTRA_ASSISTANT_NAME)
+        window.decorView.post {
+            voiceAssistantChannel?.invokeMethod(
+                "onAssistantGestureInvoked",
                 mapOf("assistantName" to name),
             )
         }
@@ -283,6 +301,75 @@ class MainActivity : FlutterActivity() {
                                 result.error("SERVICE_NOT_RUNNING", "Accessibility service is not running", null)
                             } else {
                                 result.success(service.getCurrentPackage())
+                            }
+                        }
+
+                        // Phase 9 (optional/additive): whether this device
+                        // even exposes ROLE_ASSISTANT at all (API 29+ and
+                        // not blocked by the OEM) -- lets Settings hide the
+                        // "Make PrivateAgent your Assistant" card entirely
+                        // rather than showing a button that would silently
+                        // no-op.
+                        "isAssistantRoleAvailable" -> {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                val roleManager = context.getSystemService(
+                                    android.app.role.RoleManager::class.java,
+                                )
+                                result.success(
+                                    roleManager?.isRoleAvailable(
+                                        android.app.role.RoleManager.ROLE_ASSISTANT,
+                                    ) ?: false,
+                                )
+                            } else {
+                                result.success(false)
+                            }
+                        }
+
+                        // Phase 9 (optional/additive): whether PrivateAgent
+                        // is currently the OS-selected Digital Assistant
+                        // app. RoleManager only exists on API 29+.
+                        "isDefaultAssistant" -> {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                val roleManager = context.getSystemService(
+                                    android.app.role.RoleManager::class.java,
+                                )
+                                result.success(
+                                    roleManager?.isRoleHeld(
+                                        android.app.role.RoleManager.ROLE_ASSISTANT,
+                                    ) ?: false,
+                                )
+                            } else {
+                                result.success(false)
+                            }
+                        }
+
+                        // Opens the system's "pick your assistant app"
+                        // flow. Fire-and-forget by design (mirrors
+                        // requestOverlayPermission above) -- Dart re-checks
+                        // via isDefaultAssistant when Settings resumes,
+                        // same pattern used for every other permission in
+                        // this app.
+                        "requestAssistantRole" -> {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                val roleManager = context.getSystemService(
+                                    android.app.role.RoleManager::class.java,
+                                )
+                                if (roleManager != null &&
+                                    roleManager.isRoleAvailable(
+                                        android.app.role.RoleManager.ROLE_ASSISTANT,
+                                    )
+                                ) {
+                                    val intent = roleManager.createRequestRoleIntent(
+                                        android.app.role.RoleManager.ROLE_ASSISTANT,
+                                    )
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(intent)
+                                    result.success(true)
+                                } else {
+                                    result.success(false)
+                                }
+                            } else {
+                                result.success(false)
                             }
                         }
 

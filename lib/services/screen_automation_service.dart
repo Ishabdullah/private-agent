@@ -56,6 +56,40 @@ class ScreenAutomationService {
     await _channel.invokeMethod('openAccessibilitySettings');
   }
 
+  /// Phase 9 (optional/additive): whether this device exposes
+  /// `RoleManager.ROLE_ASSISTANT` at all (Android 10+ and not blocked by
+  /// the OEM). Check this before showing any "make me your assistant" UI.
+  Future<bool> isAssistantRoleAvailable() async {
+    try {
+      return await _invoke<bool>('isAssistantRoleAvailable') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Phase 9 (optional/additive): whether PrivateAgent is currently the
+  /// OS-selected Digital Assistant app (`RoleManager.ROLE_ASSISTANT`).
+  /// Always false below Android 10 (API 29) — the role doesn't exist there.
+  Future<bool> isDefaultAssistant() async {
+    try {
+      return await _invoke<bool>('isDefaultAssistant') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the system's "choose your assistant app" flow. Fire-and-forget:
+  /// re-check [isDefaultAssistant] when the caller resumes, same pattern
+  /// every other permission in this app already uses. Returns false (no-op)
+  /// below Android 10 or if the device doesn't expose the role at all.
+  Future<bool> requestAssistantRole() async {
+    try {
+      return await _invoke<bool>('requestAssistantRole') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Dump the current screen — returns a list of UI elements
   /// Each element has: text, contentDescription, className, isClickable,
   /// isEditable, isScrollable, bounds, index, depth

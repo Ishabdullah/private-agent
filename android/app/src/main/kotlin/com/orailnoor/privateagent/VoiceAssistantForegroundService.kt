@@ -194,7 +194,27 @@ class VoiceAssistantForegroundService : Service() {
         }
     }
 
+    /** Reads the Settings screen's sensitivity slider (0.0-1.0, default 0.5,
+     * same `WakeWordConfig` prefs blob as [readConfiguredKeyword]) and maps
+     * it to sherpa-onnx's `keywordsThreshold` (default 0.25f in the library
+     * itself): higher sensitivity -> lower threshold -> easier to trigger
+     * (more false accepts, fewer false rejects), and vice versa. */
+    private fun readSensitivity(): Double {
+        val prefs: SharedPreferences = getSharedPreferences(
+            "FlutterSharedPreferences",
+            MODE_PRIVATE,
+        )
+        val raw = prefs.getString("flutter.wake_word_config", null) ?: return 0.5
+        return try {
+            JSONObject(raw).optDouble("sensitivity", 0.5)
+        } catch (e: Exception) {
+            0.5
+        }
+    }
+
     private fun loadKeywordSpotter(): KeywordSpotter {
+        val sensitivity = readSensitivity().coerceIn(0.0, 1.0)
+        val threshold = (0.5 - sensitivity * 0.4).toFloat().coerceIn(0.1f, 0.5f)
         val config = KeywordSpotterConfig(
             featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
             modelConfig = OnlineModelConfig(
@@ -208,6 +228,7 @@ class VoiceAssistantForegroundService : Service() {
                 numThreads = 1,
             ),
             keywordsFile = "$ASSETS_DIR/keywords.txt",
+            keywordsThreshold = threshold,
         )
         return KeywordSpotter(assetManager = assets, config = config)
     }

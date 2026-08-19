@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Required schema for a VoiceInteractionService's SERVICE_META_DATA,
+     confirmed against AOSP's VoiceInteractionServiceInfo parser: both
+     sessionService and recognitionService are mandatory or the OS silently
+     refuses to register this app as assistant-capable at all. -->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.orailnoor.privateagent.AssistantInteractionSessionService"
+    android:recognitionService="com.orailnoor.privateagent.AssistantPassthroughRecognitionService"
+    android:supportsAssist="true" />

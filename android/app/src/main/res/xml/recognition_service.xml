@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No attributes required for a bare recognizer; see
+     AssistantPassthroughRecognitionService.kt for why this component
+     exists (it's a mandatory companion of VoiceInteractionService, not a
+     recognizer this app's own voice pipeline actually uses). -->
+<recognition-service xmlns:android="http://schemas.android.com/apk/res/android" />

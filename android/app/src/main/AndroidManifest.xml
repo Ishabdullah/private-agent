@@ -68,6 +68,23 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Phase 9: required for AssistantInteractionSession's
+                 startVoiceActivity() handoff to succeed. Android's
+                 ActivityStarter (server-side) rejects any activity start
+                 from a brand-new voice session with
+                 START_NOT_VOICE_COMPATIBLE unless the target activity
+                 declares an intent-filter matching the intent, including
+                 CATEGORY_VOICE (which startVoiceActivity always adds
+                 automatically), even though the intent already names
+                 MainActivity explicitly by component. Confirmed against
+                 AOSP's ActivityStarter.java (the exact SecurityException
+                 message "Starting under voice control not allowed for"
+                 traces to this check) after reproducing the crash via adb
+                 logcat on a real device. -->
+            <intent-filter>
+                <action android:name="com.orailnoor.privateagent.action.ASSISTANT_INTERACTION"/>
+                <category android:name="android.intent.category.VOICE"/>
+            </intent-filter>
         </activity>
 
         <!-- Phase 5a: foreground-service shell for always-on wake-word
@@ -76,6 +93,43 @@
             android:name=".VoiceAssistantForegroundService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Phase 9 (optional/additive): lets PrivateAgent be selected as
+             the system's Digital Assistant app, so long-press-home / the
+             assistant gesture routes here. Not required for the core
+             wake-word/mic-button voice flow, which works without any of
+             this; see plan doc Section 10.3. -->
+        <service
+            android:name=".AssistantInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/interaction_service" />
+        </service>
+
+        <service
+            android:name=".AssistantInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!-- Mandatory companion of AssistantInteractionService (see
+             AssistantPassthroughRecognitionService.kt); not used by this
+             app's own voice pipeline. -->
+        <service
+            android:name=".AssistantPassthroughRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
 
         <receiver android:name=".BackgroundEngineReceiver" android:exported="true">
             <intent-filter>

@@ -21,6 +21,7 @@ The system operates on a continuous feedback loop:
 - **Remote Access:** Integrates with the Telegram Bot API via background polling, allowing users to issue commands and monitor task execution progress remotely.
 - **Voice Control:** Native speech-to-text/text-to-speech for hands-free operation. Tap the mic, speak your request, and the agent replies out loud — action results, task-progress checkpoints, and errors are all spoken, not just plain chat replies, and risky actions (sending an SMS, making a call) ask for a spoken yes/no confirmation first. If the agent's reply sounds like a follow-up question, the mic automatically reopens for your answer without needing another tap. Voice speed, pitch, volume, and the TTS voice itself are configurable in **Settings → Spoken Responses**.
 - **Wake-Word Assistant (Beta):** Say "Hey [name]" to trigger a voice command without touching the screen — fully offline, on-device keyword detection. See [Wake-word voice assistant](#wake-word-voice-assistant-beta) below for supported names and setup.
+- **Default Android Assistant (Optional, Beta):** Route your phone's long-press-home / assistant gesture straight to PrivateAgent, separate from the wake word. Opt-in from **Settings → Default Assistant** (only shown if your device supports it) — see [Default Android Assistant](#default-android-assistant-optional-beta) below.
 
 ## Security & Privacy
 
@@ -56,6 +57,16 @@ This app requires an AI brain to operate. You can use it **100% for free** by us
 You can now say **"Hey [name]"** to trigger a voice command hands-free, without tapping the mic button, as long as you pick one of these 5 names during onboarding: **Aigentik, Nova, Codey, Juno, or Milo**. Other names still work everywhere else in the app, they just don't get wake-word detection — the fully-offline detection model needs each phrase specially prepared in advance, so only these 5 are supported for now.
 
 To enable it: go to **Settings → Voice Assistant (Beta)** and turn on "Background listening". You'll see an ongoing notification while it's listening. This is new, hasn't been validated on a wide range of devices yet, and will use more battery than having it off — turn it off any time from the same toggle if it's not working well for you.
+
+Changed your mind about the name, or want it to trigger more or less easily? **Settings → Wake Word** lets you switch between the 5 supported names, turn wake-word detection on/off independently of background listening, tune sensitivity (higher triggers more easily but may misfire more often; lower needs a clearer "Hey [name]"), and re-run the mic test — all without going back through onboarding.
+
+### Default Android Assistant (Optional, Beta)
+
+Separate from the wake word above, you can optionally make PrivateAgent your phone's system assistant, so long-press-home (or whatever gesture your phone uses) opens PrivateAgent directly and starts listening — the same way Google Assistant or Bixby normally would.
+
+This is entirely opt-in and reversible. Go to **Settings → Default Assistant (Optional)** (only shown if your device supports it) and tap “Make PrivateAgent my Android Assistant” — this opens Android's own system picker, and you can back out without changing anything. To undo it later, go to **Android Settings → Apps → Default apps → Digital assistant app** and pick a different one; this works even if PrivateAgent is uninstalled.
+
+Reliability varies by phone maker — some (notably Samsung, due to Bixby) may not fully hand off the gesture to third-party apps. This doesn't affect the wake word or mic button, which work independently of this setting.
 
 ### “Restricted setting” when enabling Screen Control
 
