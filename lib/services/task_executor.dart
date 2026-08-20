@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'ai_service.dart';
 import 'screen_automation_service.dart';
 import 'app_launcher_service.dart';
@@ -92,8 +93,14 @@ Rules:
 
   /// Execute a multi-step task with LLM guidance
   Future<String> executeTask(String userGoal) async {
+    // Truncated rather than omitted: logToNative persists to native Logcat
+    // even in release builds (by design -- it's how on-device issues get
+    // diagnosed without an attached dev machine), but the full goal text
+    // can carry sensitive content (e.g. the actual message body for a
+    // "text X saying Y" task) -- a short prefix is enough to identify which
+    // task ran without logging its full content (plan Section 19).
     await ScreenAutomationService.logToNative(
-      "[TaskExecutor] executeTask() CALLED with goal: $userGoal",
+      "[TaskExecutor] executeTask() CALLED with goal: ${_truncateForLog(userGoal)}",
     );
     _cancelled = false;
 
@@ -227,10 +234,16 @@ Rules:
       final screenContent = _aiService.useScreenCompression
           ? await _screenService.getCompressedScreenDescription(userGoal)
           : await _screenService.getScreenDescription();
-      developer.log(
-        '=== SCREEN DUMP (Step ${step + 1}) ===\n$screenContent',
-        name: 'PrivateAgent',
-      );
+      // Debug-only from here down: these logs dump full screen content,
+      // prompts, LLM responses, and parsed action params (which can include
+      // SMS message text, contact names, phone numbers) -- must never reach
+      // a release build's logcat (plan Section 19).
+      if (kDebugMode) {
+        developer.log(
+          '=== SCREEN DUMP (Step ${step + 1}) ===\n$screenContent',
+          name: 'PrivateAgent',
+        );
+      }
 
       // Determine previous result string
       final prevResultStr = step > 0 && results.isNotEmpty
@@ -252,7 +265,9 @@ CURRENT SCREEN TEXT DUMP:
 $screenContent$prevResultStr$failureHint
 Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. What is the next action?''';
 
-      developer.log('=== AI PROMPT ===\n$prompt', name: 'PrivateAgent');
+      if (kDebugMode) {
+        developer.log('=== AI PROMPT ===\n$prompt', name: 'PrivateAgent');
+      }
 
       // 3. Get AI response — races against cancel signal so Stop works immediately
       String response;
@@ -288,10 +303,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         response = aiResponse.content;
         totalTokens += aiResponse.totalTokens;
 
-        developer.log(
-          '=== RAW AI RESPONSE ===\n$response',
-          name: 'PrivateAgent',
-        );
+        if (kDebugMode) {
+          developer.log(
+            '=== RAW AI RESPONSE ===\n$response',
+            name: 'PrivateAgent',
+          );
+        }
       } catch (e) {
         if (_cancelled) {
           results.add('Task cancelled by user.');
@@ -359,10 +376,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         parsedJsonStr = jsonStr;
       } catch (firstError) {
         // First attempt failed — retry once
-        developer.log(
-          '=== JSON PARSE FAILED, RETRYING ===\nError: $firstError\nRaw: $response',
-          name: 'PrivateAgent',
-        );
+        if (kDebugMode) {
+          developer.log(
+            '=== JSON PARSE FAILED, RETRYING ===\nError: $firstError\nRaw: $response',
+            name: 'PrivateAgent',
+          );
+        }
         _report('Retrying step ${step + 1}...\n(Failed to parse: $firstError)');
         // Wait 2 seconds before retrying to prevent rate-limit spam
         await Future.delayed(const Duration(seconds: 2));
@@ -372,10 +391,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
             prompt,
           );
           totalTokens += retryResponse.totalTokens;
-          developer.log(
-            '=== RETRY AI RESPONSE ===\n${retryResponse.content}',
-            name: 'PrivateAgent',
-          );
+          if (kDebugMode) {
+            developer.log(
+              '=== RETRY AI RESPONSE ===\n${retryResponse.content}',
+              name: 'PrivateAgent',
+            );
+          }
 
           String jsonStr = extractTaskActionJson(retryResponse.content);
           actionJson = jsonDecode(jsonStr) as Map<String, dynamic>;
@@ -408,10 +429,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
       final reasoning = actionJson['reasoning'] as String? ?? '';
       final isComplete = actionJson['is_complete'] == true;
 
-      developer.log(
-        '=== PARSED ACTION ===\nAction: $action\nParams: $params\nReasoning: $reasoning\nIs Complete: $isComplete',
-        name: 'PrivateAgent',
-      );
+      if (kDebugMode) {
+        developer.log(
+          '=== PARSED ACTION ===\nAction: $action\nParams: $params\nReasoning: $reasoning\nIs Complete: $isComplete',
+          name: 'PrivateAgent',
+        );
+      }
 
       _report('Step ${step + 1}: $reasoning');
 
@@ -519,10 +542,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
           actionResult = 'Unknown action: $action';
       }
 
-      developer.log(
-        '=== NATIVE EXECUTION RESULT ===\n$actionResult',
-        name: 'PrivateAgent',
-      );
+      if (kDebugMode) {
+        developer.log(
+          '=== NATIVE EXECUTION RESULT ===\n$actionResult',
+          name: 'PrivateAgent',
+        );
+      }
 
       // Track consecutive failures to detect stuck loops
       if (!success) {
@@ -640,6 +665,16 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
 
   void _report(String message) {
     onProgress?.call(message);
+  }
+
+  /// Shortens text before it goes to `logToNative` (persists to native
+  /// Logcat even in release builds) -- enough to identify the task at a
+  /// glance without logging its full, potentially sensitive content.
+  String _truncateForLog(String text, {int maxLength = 50}) {
+    final trimmed = text.trim();
+    return trimmed.length <= maxLength
+        ? trimmed
+        : '${trimmed.substring(0, maxLength)}...';
   }
 
   Future<bool> _submitKeyboardAction() async {
@@ -776,10 +811,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
       }
 
       results.add('Memory Replay Step ${i + 1}: $actionResult');
-      developer.log(
-        '=== MEMORY REPLAY RESULT ===\n$actionResult',
-        name: 'PrivateAgent',
-      );
+      if (kDebugMode) {
+        developer.log(
+          '=== MEMORY REPLAY RESULT ===\n$actionResult',
+          name: 'PrivateAgent',
+        );
+      }
 
       if (!success) {
         return false; // Break out of replay if a step fails

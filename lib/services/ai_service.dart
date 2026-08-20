@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/agent_action.dart';
@@ -261,10 +262,15 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         'max_tokens': _effectiveMaxTokens,
       });
 
-      developer.log(
-        'API Request: $requestUrl\n$requestBody',
-        name: 'AiService',
-      );
+      // Debug-only: requestBody is the full conversation (system prompt +
+      // history), so this must never reach a release build's logcat (plan
+      // Section 19's "no full transcripts logged" rule).
+      if (kDebugMode) {
+        developer.log(
+          'API Request: $requestUrl\n$requestBody',
+          name: 'AiService',
+        );
+      }
 
       final response = await http
           .post(
@@ -279,10 +285,12 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
           )
           .timeout(const Duration(minutes: 30));
 
-      developer.log(
-        'API Response [${response.statusCode}]: ${response.body}',
-        name: 'AiService',
-      );
+      if (kDebugMode) {
+        developer.log(
+          'API Response [${response.statusCode}]: ${response.body}',
+          name: 'AiService',
+        );
+      }
 
       if (response.statusCode != 200) {
         String errorMessage = response.body;

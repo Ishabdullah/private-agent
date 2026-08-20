@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'dart:async';
 import 'dart:developer' as developer;
 
@@ -266,7 +267,12 @@ class ScreenAutomationService {
     }
 
     final screenString = buffer.toString();
-    developer.log('Screen Dump Extracted:\n$screenString', name: 'ScreenAutomation');
+    // Debug-only: this is the full on-screen text (potentially messages,
+    // account details, anything visible) -- must never reach a release
+    // build's logcat (plan Section 19's "no full transcripts" rule).
+    if (kDebugMode) {
+      developer.log('Screen Dump Extracted:\n$screenString', name: 'ScreenAutomation');
+    }
     return screenString;
   }
 

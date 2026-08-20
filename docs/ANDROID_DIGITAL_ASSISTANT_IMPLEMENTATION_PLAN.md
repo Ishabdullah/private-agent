@@ -456,13 +456,15 @@ Two existing, separate memory stores must be reconciled, not replaced:
 
 ## 16. Privacy/Security
 
-### 16.1 What is currently captured and where it goes (as of today's codebase, before any voice work)
+### 16.1 What is currently captured and where it goes
+
+**Correction (Phase 11, 2026-08-20)**: the table below originally described the pre-voice-work codebase and is now stale on one point — API keys/tokens moved to `flutter_secure_storage` in Phase 1, not plaintext `SharedPreferences` as first audited. Updated to reflect current reality; see `docs/ANDROID_DIGITAL_ASSISTANT_PROGRESS.md`'s Phase 11 session entry for the rest of the Phase 11 audit (logging of full prompts/screen dumps/action params, now gated to debug builds only; `logToNative`'s task-goal logging, now truncated).
 
 | Data | Captured how | Leaves device? |
 |---|---|---|
 | Chat/task text | Typed or (push-to-talk) transcribed | Yes — sent to whatever LLM `baseUrl` is configured (DeepSeek/Groq/NVIDIA/OpenRouter/custom cloud, or stays local if Ollama/local server is configured) |
 | Screen accessibility dumps | `AgentAccessibilityService.dumpScreen()` | Yes — the text dump (not a screenshot, no bitmap by default) is included directly in the LLM prompt during `execute_task` runs; a JPEG screenshot capability exists (`takeScreenshot`) but is **not currently invoked by `TaskExecutor`'s main loop** (it exists as an exposed method but grep of `TaskExecutor` shows the text-dump path is what's actually used step-by-step) — this should be re-verified in Phase 0 of implementation since it directly affects what "screen contents" leaves the device |
-| API keys / Telegram bot token | User-entered | Stored **locally only**, but in **plaintext `SharedPreferences`**, not OS-secure storage — a real, current risk if the device itself is compromised or another app has storage access on rooted devices |
+| API keys / Telegram bot token | User-entered | Stored **locally only**, in Android Keystore-backed `flutter_secure_storage` (migrated Phase 1) — not a current risk in the way plaintext storage would be |
 | Task/chat history | Local disk (`ChatHistoryService`, `TaskHistoryLogger`) | No — local only, never uploaded, but also never encrypted at rest |
 | Telegram integration | Bot token + relayed commands | Yes, inherently — by design, once enabled, Telegram's servers see command text (this is an explicit, opt-in feature already disclosed in the README) |
 

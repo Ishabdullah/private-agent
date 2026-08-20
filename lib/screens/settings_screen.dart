@@ -1107,6 +1107,78 @@ class _SettingsScreenState extends State<SettingsScreen>
             children: _buildPermissionTiles(),
           ),
 
+          // 7b. Privacy Card — plan doc Section 16.2's recommendation: a
+          // visible, plain-language summary of what leaves the device and
+          // where, mirroring the audit in Section 16.1 rather than leaving
+          // it only documented in an engineering doc nobody using the app
+          // will ever read.
+          _buildSettingsCard(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Privacy',
+            subtitle: 'What PrivateAgent captures and where it goes',
+            isDark: isDark,
+            children: [
+              _buildPrivacyRow(
+                isDark,
+                'Chat & voice commands',
+                'Sent to the AI provider you configure above (or stays on '
+                    'your network if you point it at a local server) — '
+                    'never to us or any other third party.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Screen contents',
+                'When running a multi-step task, the on-screen text (not a '
+                    'screenshot) is sent to your AI provider alongside your '
+                    'request, so it can decide what to tap or type next.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Wake word audio',
+                'Never leaves your device — the "Hey [name]" detection runs '
+                    'entirely offline. Only what you say after it triggers '
+                    'goes through speech-to-text like any other voice command.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Voice-to-text',
+                'Uses your device\'s speech recognizer. Depending on your '
+                    'phone and language, that may process audio on-device or '
+                    'send it to your phone maker/Google\'s cloud service — '
+                    'this is the same recognizer every voice feature on your '
+                    'phone already uses, not something unique to this app.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'API keys & Telegram bot token',
+                'Stored in Android\'s encrypted Keystore-backed secure '
+                    'storage, not plain preferences.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Chat & task history',
+                'Stored only on this device — never uploaded, unless you '
+                    'enable Telegram remote control below.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Telegram remote control (optional)',
+                'If enabled, commands you send via Telegram pass through '
+                    'Telegram\'s own servers — inherent to how Telegram '
+                    'works, and only active if you turn this on.',
+              ),
+              _buildPrivacyRow(
+                isDark,
+                'Accessibility permission',
+                'The most powerful permission this app holds — it can read '
+                    'and interact with whatever is on your screen. That '
+                    'access is required for the core screen-automation '
+                    'feature and is used only to carry out your requests.',
+                isLast: true,
+              ),
+            ],
+          ),
+
           // 8. Task History Card
           _buildSettingsCard(
             icon: Icons.history_outlined,
@@ -1464,6 +1536,38 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// One row of the Privacy card: a bold label plus a short plain-language
+  /// explanation. Deliberately not collapsible/interactive — this is meant
+  /// to be skimmed in full, not hidden behind taps.
+  Widget _buildPrivacyRow(
+    bool isDark,
+    String label,
+    String description, {
+    bool isLast = false,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            description,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              color: isDark ? Colors.white60 : Colors.black54,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
