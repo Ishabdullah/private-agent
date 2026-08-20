@@ -11,7 +11,7 @@ Tracks where implementation of `docs/ANDROID_DIGITAL_ASSISTANT_IMPLEMENTATION_PL
 
 ## Current state
 
-- **Current phase**: Phase 9 — Android assistant integration (optional/additive)
+- **Current phase**: Phase 11 — Privacy/security pass
 - **Status**: Phase 9 done AND confirmed working end-to-end on the user's physical Samsung device (2026-08-19) — the assistant gesture (side button) opens PrivateAgent and stays open, after two real bugs found and fixed live via adb logcat (a manifest intent-filter gap causing a SecurityException, then a defensive fallback timer that was closing the whole app). Phase 10 also done. (Historical note: Phase 5a + 5b's wake-word pipeline was also confirmed working end-to-end on the user's physical device, including both a real crash fix and a real "Hey Nova" trigger — see the 2026-08-16 session entries below. The user has since kept the app running continuously on their phone with no reported issues.)
 - **Engine change since Phase 4**: the Phase 3 "Vosk-only" decision is superseded. `vosk_flutter` cannot even be added to this project (Dart SDK constraint) and `vosk-android` hasn't released since March 2023. Landed on **sherpa-onnx** (k2-fsa, Apache 2.0, actively maintained). Full reasoning in plan doc **Section 8.3.2**.
 - **IMPORTANT correction from the Phase 5a session's notes**: "open-vocabulary keyword spotting" does **not** mean "type any word and it works at runtime." Reading sherpa-onnx's C++ source directly (`csrc/utils.cc`'s `EncodeBase`) during Phase 5b confirmed keywords must be pre-tokenized into the model's BPE pieces **offline** (via `text2token.py` + the model's `bpe.model`/SentencePiece) — there's no on-device tokenizer anywhere in the Kotlin/JNI API. This was wrong in the original Phase 5a write-up and is corrected in plan doc Section 8.3.2 rather than silently edited.
@@ -225,7 +225,7 @@ Continuing the same live-testing session, user reported three more issues after 
 
 Verified via colab-cli (`privateagent-fixbatch2`): 68/68 tests, 155 pre-existing analyze issues (0 new — checked message_bubble.dart/contacts_service.dart/communication_service.dart hits individually, all pre-existing `withOpacity` infos elsewhere in the file), debug build clean, installed via `adb install`. Committed as `88f572c` and pushed.
 - Also worth flagging to the user directly (not itself a bug, just a real capability gap noticed while reading `communication_service.dart`): `send_sms` only **opens** the Messages app with the text pre-filled via the `sms:` URI scheme — it does not silently auto-send in the background. The user still needs to tap Send themselves, even after voice-confirming "yes". `SEND_SMS` is a declared manifest permission but nothing in the app actually calls a native `SmsManager` to send directly; worth a deliberate decision (not done here — out of scope for a live bug-fix session) on whether true silent-send is wanted, given the security/abuse implications of an LLM being able to fire off SMS messages with zero final human tap.
-- **Not yet re-confirmed on-device.**
+- **Confirmed working on-device (2026-08-20)**: user retested after this round of fixes — voice-triggered actions execute (not just narrate), contact lookups resolve correctly, chat links are clickable, and confirmation capture waits properly for a yes/no answer. All three rounds of live-testing bugs this session (tool_call-tag parsing, prompt-conflict/TTS-completion race, contacts-permission/link-tap/mode-toggle) are now closed and device-verified, not just build-verified.
 
 ## Session history
 
