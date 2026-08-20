@@ -215,6 +215,18 @@ User reported the tool_call fix didn't fully resolve things: voice-triggered act
 - **Not yet re-confirmed on-device** — session ended before the user could retest with this build. Next action: confirm voice-triggered actions (e.g. "text Mom I love you") now actually execute instead of just narrating, and that the yes/no confirmation capture now waits for the prompt to finish before listening.
 - **Given three real, independent bugs surfaced in one afternoon of live device testing** (tool_call-tag parsing, prompt-conflict silencing action JSON, TTS-completion race), the voice pipeline as a whole should be treated as **not yet reliable** despite passing all unit tests throughout — none of these were catchable by the existing test suite (which mocks the LLM/TTS rather than exercising real model output or real audio timing). Worth keeping in mind for Phase 12 (Testing) and Phase 16 (real-device validation) scoping.
 
+### 2026-08-19/20 — Third round of device-testing fixes: contacts permission, unclickable links, Chat/Agent mode confusion
+
+Continuing the same live-testing session, user reported three more issues after the voice-action/confirmation fixes:
+
+1. **"Contact doesn't exist" for contacts that do exist**: `ContactsService.searchContacts` silently returned `[]` whenever `flutter_contacts`' own `requestPermission()` wasn't granted — indistinguishable from a genuine no-match, and given the app's data had been wiped by several `adb uninstall`/reinstall cycles this session, Contacts permission plausibly just wasn't (re-)granted. Fixed to use `permission_handler`'s `Permission.contacts` (matching Settings/onboarding) and throw a distinct `ContactsPermissionDeniedException`, so `make_call`/`send_sms` now say "Contacts permission is required... Grant it in Settings" instead of the misleading "could not find contact".
+2. **Links in chat replies were styled but not clickable**: `MarkdownBody` in `message_bubble.dart` never had an `onTapLink` handler wired — added one via `url_launcher`.
+3. **"Chat and Agent buttons not switching"** — turned out not to be a bug (confirmed via `AskUserQuestion`): voice commands always run with full agent/action capability regardless of the Chat/Agent toggle (by design — a voice assistant needs to be able to act), but nothing in the UI said so, reading as "the buttons aren't doing anything" during voice-focused testing. Added a small caption under the toggle clarifying it only affects typed messages.
+
+Verified via colab-cli (`privateagent-fixbatch2`): 68/68 tests, 155 pre-existing analyze issues (0 new — checked message_bubble.dart/contacts_service.dart/communication_service.dart hits individually, all pre-existing `withOpacity` infos elsewhere in the file), debug build clean, installed via `adb install`. Committed as `88f572c` and pushed.
+- Also worth flagging to the user directly (not itself a bug, just a real capability gap noticed while reading `communication_service.dart`): `send_sms` only **opens** the Messages app with the text pre-filled via the `sms:` URI scheme — it does not silently auto-send in the background. The user still needs to tap Send themselves, even after voice-confirming "yes". `SEND_SMS` is a declared manifest permission but nothing in the app actually calls a native `SmsManager` to send directly; worth a deliberate decision (not done here — out of scope for a live bug-fix session) on whether true silent-send is wanted, given the security/abuse implications of an LLM being able to fire off SMS messages with zero final human tap.
+- **Not yet re-confirmed on-device.**
+
 ## Session history
 
 ### 2026-08-18 — Phase 9: VoiceInteractionService/ROLE_ASSISTANT (optional/additive), verified via colab-cli (full build) — NOT device-tested
