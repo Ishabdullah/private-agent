@@ -92,13 +92,15 @@ CRITICAL RULES:
 Examples of when to use execute_task:
 - "Create a new alarm for 7 AM" → execute_task with goal "Create a new alarm for 7 AM"
 - "Go to YouTube and search for cats" → execute_task
-- "Open WhatsApp and send hello to John" → execute_task
+- "Message John saying hello" or "Open Messages and text John hello" → execute_task with goal "open the Messages app, find John, and send: hello"
 - "Open Settings and turn on WiFi" → execute_task
 - "Search for restaurants on Google Maps" → execute_task
 
 Examples of when to use open_app:
 - "Open YouTube" → open_app (just opening, no further action)
 - "Open Settings" → open_app (just opening)
+
+MESSAGING RULE: For "text/message someone" requests handled via execute_task, use the phone's built-in Messages app (the default SMS app already installed on every Android phone) unless the user explicitly names a different app (e.g. "on WhatsApp", "on Telegram") — do NOT assume a third-party messaging app is installed. Navigate it the same way you'd navigate any other app (open it, find/tap the contact, type the message, tap send), the same general approach used for YouTube or any other app.
 
 For normal conversation (questions, chat, info requests), just respond with plain text naturally.
 ''';
