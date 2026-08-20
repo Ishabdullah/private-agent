@@ -22,7 +22,7 @@ class TaskExecutor {
   final ScreenAutomationService _screenService;
   final AppLauncherService _appLauncher;
   final ShizukuService _shizukuService;
-  final NotificationService _notificationService = NotificationService();
+  final NotificationService _notificationService;
   final SkillMemoryService _skillMemory = SkillMemoryService();
   final RecoveryEngine _recoveryEngine = RecoveryEngine();
 
@@ -52,12 +52,14 @@ class TaskExecutor {
     required ScreenAutomationService screenService,
     required AppLauncherService appLauncher,
     required ShizukuService shizukuService,
+    NotificationService? notificationService,
     this.onProgress,
     this.onConfirmRiskyTap,
   }) : _aiService = aiService,
        _screenService = screenService,
        _appLauncher = appLauncher,
-       _shizukuService = shizukuService;
+       _shizukuService = shizukuService,
+       _notificationService = notificationService ?? NotificationService();
 
   static const Set<String> _riskyTapKeywords = {
     'send', 'post', 'tweet', 'publish', 'share', 'submit',

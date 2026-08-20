@@ -11,13 +11,34 @@ import 'task_executor.dart';
 import 'ai_service.dart';
 
 class ActionHandler {
-  final AppLauncherService _appLauncher = AppLauncherService();
-  final ContactsService _contacts = ContactsService();
-  final CommunicationService _communication = CommunicationService();
-  final AlarmService _alarm = AlarmService();
-  final SystemControlService _systemControl = SystemControlService();
-  final ShizukuService _shizuku = ShizukuService();
-  final ScreenAutomationService _screenAutomation = ScreenAutomationService();
+  final AppLauncherService _appLauncher;
+  final ContactsService _contacts;
+  final CommunicationService _communication;
+  final AlarmService _alarm;
+  final SystemControlService _systemControl;
+  final ShizukuService _shizuku;
+  final ScreenAutomationService _screenAutomation;
+
+  /// All dependencies are optional and default to real instances, matching
+  /// every existing call site (`ActionHandler()`) unchanged — this
+  /// constructor-injection shape only exists so tests can substitute fakes,
+  /// the same pattern `TaskExecutor`/`VoiceConversationController` already
+  /// use. Not a behavior change.
+  ActionHandler({
+    AppLauncherService? appLauncher,
+    ContactsService? contacts,
+    CommunicationService? communication,
+    AlarmService? alarm,
+    SystemControlService? systemControl,
+    ShizukuService? shizuku,
+    ScreenAutomationService? screenAutomation,
+  }) : _appLauncher = appLauncher ?? AppLauncherService(),
+       _contacts = contacts ?? ContactsService(),
+       _communication = communication ?? CommunicationService(),
+       _alarm = alarm ?? AlarmService(),
+       _systemControl = systemControl ?? SystemControlService(),
+       _shizuku = shizuku ?? ShizukuService(),
+       _screenAutomation = screenAutomation ?? ScreenAutomationService();
 
   ShizukuService get shizuku => _shizuku;
   ScreenAutomationService get screenAutomation => _screenAutomation;
