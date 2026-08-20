@@ -84,7 +84,9 @@ Two distinct execution paths exist and are easy to conflate:
 - `app_launcher_service.dart` — resolves app names to packages and launches them (`installed_apps` package).
 - `contacts_service.dart` / `communication_service.dart` — contact lookup, calls, SMS.
 - `alarm_service.dart`, `system_control_service.dart` (volume/brightness), `notification_service.dart` — device control wrappers.
-- `voice_service.dart` — speech-to-text input and TTS output.
+- `voice_service.dart` — speech-to-text input and TTS output (`awaitSpeakCompletion(true)` is set so `speak()` doesn't return until playback actually finishes — anything that listens right after speaking depends on this).
+- `voice_conversation_controller.dart` — orchestrates a full voice turn (capture → `AiService`/`ActionHandler` → speak), shared by the mic button, wake word, and the Phase 9 assistant-gesture entry point; owns the destructive-action (`send_sms`/`make_call`) spoken confirmation guard and throttled task-progress narration.
+- `wake_word_settings_service.dart` / `tts_settings_service.dart` — persistence for the wake-word config (name/sensitivity/enabled) and TTS rate/pitch/volume/voice, both editable post-onboarding from Settings.
 - `telegram_service.dart` — background polling of the Telegram Bot API for remote command intake; mirrors results back to the chat.
 - `chat_history_service.dart`, `task_history_logger.dart`, `skill_memory_service.dart` — all persist to local storage (`shared_preferences`/`path_provider`), not a remote backend. There is no server component to this project — everything is on-device.
 
