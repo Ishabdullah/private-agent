@@ -10,7 +10,12 @@ class CommunicationService {
 
     // If contact name given, look up the number
     if (contactName != null && number == null) {
-      number = await _contactsService.getPhoneNumber(contactName);
+      try {
+        number = await _contactsService.getPhoneNumber(contactName);
+      } on ContactsPermissionDeniedException {
+        return 'Contacts permission is required to look up "$contactName". '
+            'Grant it in Settings → App Permissions.';
+      }
       if (number == null) {
         return 'Could not find contact "$contactName". Try searching contacts first.';
       }
@@ -41,7 +46,12 @@ class CommunicationService {
     String? number = phoneNumber;
 
     if (contactName != null && number == null) {
-      number = await _contactsService.getPhoneNumber(contactName);
+      try {
+        number = await _contactsService.getPhoneNumber(contactName);
+      } on ContactsPermissionDeniedException {
+        return 'Contacts permission is required to look up "$contactName". '
+            'Grant it in Settings → App Permissions.';
+      }
       if (number == null) {
         return 'Could not find contact "$contactName".';
       }

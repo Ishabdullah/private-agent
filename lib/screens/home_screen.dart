@@ -1094,35 +1094,55 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildModeSelector(bool isDark) {
     final activeBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
 
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 12),
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: activeBg,
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.06),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Center(
+          child: Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 4),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: activeBg,
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.06),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildModeButton(
+                  'chat',
+                  'Chat',
+                  Icons.chat_bubble_outline_rounded,
+                  isDark,
+                ),
+                _buildModeButton(
+                  'agent',
+                  'Agent',
+                  Icons.smart_toy_outlined,
+                  isDark,
+                ),
+              ],
+            ),
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildModeButton(
-              'chat',
-              'Chat',
-              Icons.chat_bubble_outline_rounded,
-              isDark,
+        // Voice commands always have full device-action capability
+        // regardless of this toggle — it only governs typed messages.
+        // Called out explicitly since nothing else in the UI distinguishes
+        // this, and it read as "the buttons aren't doing anything" for a
+        // user testing primarily by voice.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'This only affects typed messages — voice commands always act like Agent mode',
+            style: TextStyle(
+              fontSize: 11,
+              color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
             ),
-            _buildModeButton(
-              'agent',
-              'Agent',
-              Icons.smart_toy_outlined,
-              isDark,
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 

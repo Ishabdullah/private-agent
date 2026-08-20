@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/chat_message.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -110,6 +111,12 @@ class MessageBubble extends StatelessWidget {
               MarkdownBody(
                 data: message.content,
                 selectable: true,
+                onTapLink: (text, href, title) {
+                  if (href == null) return;
+                  final uri = Uri.tryParse(href);
+                  if (uri == null) return;
+                  launchUrl(uri, mode: LaunchMode.externalApplication);
+                },
                 styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
                   p: TextStyle(
                     color: Theme.of(context).colorScheme.onSurface,
