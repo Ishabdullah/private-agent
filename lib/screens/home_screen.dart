@@ -84,6 +84,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// the wake-word engine is just an automatic trigger for [_toggleVoice]'s
   /// existing path, not a separate agent (Section 7's "reuse, don't
   /// rewrite" design decision).
+  /// Confirms a risky tap `TaskExecutor` is about to make mid-task (see
+  /// `TaskExecutor.onConfirmRiskyTap`'s doc comment) — the typed-chat
+  /// equivalent of `VoiceConversationController._confirmRiskyTap`'s spoken
+  /// yes/no prompt, since there's no voice channel here. Defaults to
+  /// declining (returns `false`) if the widget is unmounted by the time the
+  /// dialog would show, matching the "safe by default" behavior every
+  /// other confirmation path in this app already uses.
+  Future<bool> _confirmRiskyTap(String description) async {
+    if (!mounted) return false;
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm action'),
+        content: Text(description),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Proceed'),
+          ),
+        ],
+      ),
+    );
+    return proceed ?? false;
+  }
+
   void _onWakeWordDetected(String assistantName) {
     if (_voiceController.state != VoiceConversationState.idle) return;
     // Dictation mode: wake-word turns are conversational commands, not the
@@ -206,6 +236,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _scrollToBottom();
             }
           },
+          onConfirmRiskyTap: _confirmRiskyTap,
         );
 
         setState(() {

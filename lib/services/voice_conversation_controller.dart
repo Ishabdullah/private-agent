@@ -171,6 +171,7 @@ class VoiceConversationController {
             action,
             aiService: aiService,
             onProgress: _handleProgress,
+            onConfirmRiskyTap: _confirmRiskyTap,
           );
           success = result.success;
           spokenResponse = action.response.isNotEmpty
@@ -223,6 +224,25 @@ class VoiceConversationController {
       mode: VoiceListenMode.confirmation,
     );
     if (_cancelled) return false;
+    return _isAffirmative(reply);
+  }
+
+  /// Confirms a risky tap `TaskExecutor` is about to make mid-task (see
+  /// `TaskExecutor.onConfirmRiskyTap`'s doc comment) — same spoken
+  /// yes/no pattern as [_confirmDestructiveAction], generalized to an
+  /// arbitrary description since there's no `AgentAction` here, just a
+  /// tap the model is about to make while navigating the screen.
+  Future<bool> _confirmRiskyTap(String description) async {
+    _setState(VoiceConversationState.confirming);
+    await voiceService.speak('$description Say yes to confirm, or no to cancel.');
+    if (_cancelled) return false;
+
+    final reply = await _captureTranscript(
+      timeout: followUpListenTimeout,
+      mode: VoiceListenMode.confirmation,
+    );
+    if (_cancelled) return false;
+    _setState(VoiceConversationState.thinking);
     return _isAffirmative(reply);
   }
 

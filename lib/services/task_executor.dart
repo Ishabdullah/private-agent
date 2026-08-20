@@ -29,6 +29,20 @@ class TaskExecutor {
   /// Callback to report progress messages to the UI
   final void Function(String message)? onProgress;
 
+  /// Asks the caller to confirm before a tap that looks like it's about to
+  /// send/post/call/pay/etc (see [_looksRisky]) — the single-shot
+  /// `send_sms`/`make_call` actions already get a confirmation guard
+  /// (`VoiceConversationController._confirmDestructiveAction`), but a
+  /// multi-step task tapping through to the same kind of button in
+  /// Messages/WhatsApp/email previously bypassed it entirely, for both
+  /// voice and typed triggers (plan Section 19's "review the
+  /// destructive-action guardrails end-to-end" follow-up). Passed the tap's
+  /// description (button text, or the model's stated reasoning for a
+  /// coordinate click); should return `false` to decline. `null` means no
+  /// confirmation channel is available and risky taps proceed unconfirmed
+  /// (matches every call site's behavior before this guard existed).
+  final Future<bool> Function(String description)? onConfirmRiskyTap;
+
   /// Set to true to cancel the running task
   bool _cancelled = false;
   Completer<void>? _cancelCompleter;
@@ -39,10 +53,22 @@ class TaskExecutor {
     required AppLauncherService appLauncher,
     required ShizukuService shizukuService,
     this.onProgress,
+    this.onConfirmRiskyTap,
   }) : _aiService = aiService,
        _screenService = screenService,
        _appLauncher = appLauncher,
        _shizukuService = shizukuService;
+
+  static const Set<String> _riskyTapKeywords = {
+    'send', 'post', 'tweet', 'publish', 'share', 'submit',
+    'confirm', 'pay', 'buy', 'purchase', 'order', 'checkout',
+    'call', 'dial',
+  };
+
+  bool _looksRisky(String label) {
+    final lower = label.toLowerCase();
+    return _riskyTapKeywords.any((k) => lower.contains(k));
+  }
 
   /// Cancel the currently running task — takes effect immediately
   void cancel() {
@@ -454,6 +480,41 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
       }
       lastAction = action; // Track for adaptive delay
 
+      // Confirm before a tap that looks like it's about to send/post/call/
+      // pay/etc — see onConfirmRiskyTap's doc comment.
+      if ((action == 'click_text' || action == 'click_at') &&
+          onConfirmRiskyTap != null) {
+        final tapLabel = action == 'click_text'
+            ? (params['text'] as String? ?? '')
+            : reasoning;
+        if (_looksRisky(tapLabel)) {
+          final description = action == 'click_text'
+              ? 'Tap "$tapLabel"?'
+              : (reasoning.isNotEmpty ? reasoning : 'Perform this action?');
+          final proceed = await onConfirmRiskyTap!(description);
+          if (_cancelled) return 'Task cancelled.';
+          if (!proceed) {
+            results.add(
+              'Step ${step + 1}: user declined a risky tap ($tapLabel).',
+            );
+            _report('Cancelled — you said not to.');
+            await _notificationService.showTaskCompleteNotification(
+              'Task Cancelled',
+              'You declined a risky step.',
+            );
+            await TaskHistoryLogger.logTask(
+              userGoal,
+              'Cancelled',
+              totalTokens,
+              step,
+              results,
+            );
+            await _screenService.showToast('Cancelled');
+            return "Okay, I stopped before that step.";
+          }
+        }
+      }
+
       // 5. Execute the action
       bool success = false;
       String actionResult = '';
@@ -738,6 +799,26 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         delay = 1000;
 
       await Future.delayed(Duration(milliseconds: delay));
+
+      // Same risky-tap confirmation as the LLM-driven loop -- a replayed
+      // skill (no LLM involved) taps through exactly like a live task, so
+      // it needs the same guard rather than silently re-sending whatever
+      // it sent the first time it learned this skill.
+      if ((step.action == 'click_text' || step.action == 'click_at') &&
+          onConfirmRiskyTap != null) {
+        final tapLabel = step.params['text'] as String? ?? '';
+        if (_looksRisky(tapLabel)) {
+          final proceed = await onConfirmRiskyTap!(
+            tapLabel.isNotEmpty ? 'Tap "$tapLabel"?' : 'Perform this action?',
+          );
+          if (_cancelled) return false;
+          if (!proceed) {
+            results.add('Replay step ${i + 1}: user declined a risky tap.');
+            _report('Cancelled — you said not to.');
+            return false;
+          }
+        }
+      }
 
       bool success = false;
       String actionResult = '';

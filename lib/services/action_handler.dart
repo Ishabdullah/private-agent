@@ -30,6 +30,7 @@ class ActionHandler {
     AgentAction action, {
     AiService? aiService,
     void Function(String)? onProgress,
+    Future<bool> Function(String description)? onConfirmRiskyTap,
   }) async {
     try {
       String result;
@@ -158,6 +159,7 @@ class ActionHandler {
             appLauncher: _appLauncher,
             shizukuService: _shizuku,
             onProgress: onProgress,
+            onConfirmRiskyTap: onConfirmRiskyTap,
           );
           result = await _currentExecutor!.executeTask(goal);
           _currentExecutor = null;

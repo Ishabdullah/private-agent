@@ -87,16 +87,38 @@ class FakeAiService extends AiService {
 class FakeActionHandler extends ActionHandler {
   final Future<AgentActionResult> Function(AgentAction action) responder;
   final List<String> progressMessages;
-  FakeActionHandler(this.responder, {this.progressMessages = const []});
+  /// If set, simulates a `TaskExecutor` mid-task risky tap by invoking the
+  /// caller's `onConfirmRiskyTap` with this description before deciding
+  /// whether to call [responder] at all -- mirrors the real
+  /// TaskExecutor.onConfirmRiskyTap gate (decline -> skip the action).
+  final String? riskyTapDescription;
+  bool? riskyTapProceeded;
+
+  FakeActionHandler(
+    this.responder, {
+    this.progressMessages = const [],
+    this.riskyTapDescription,
+  });
 
   @override
   Future<AgentActionResult> execute(
     AgentAction action, {
     AiService? aiService,
     void Function(String)? onProgress,
+    Future<bool> Function(String description)? onConfirmRiskyTap,
   }) async {
     for (final m in progressMessages) {
       onProgress?.call(m);
+    }
+    if (riskyTapDescription != null && onConfirmRiskyTap != null) {
+      riskyTapProceeded = await onConfirmRiskyTap(riskyTapDescription!);
+      if (riskyTapProceeded != true) {
+        return AgentActionResult(
+          actionType: action.action,
+          success: true,
+          details: 'Cancelled before the risky tap.',
+        );
+      }
     }
     return responder(action);
   }
@@ -427,6 +449,74 @@ void main() {
 
       expect(actionRan, isFalse);
       expect(voice.spoken.last, "Okay, I won't do that.");
+    });
+
+    test('risky mid-task tap (e.g. execute_task about to tap Send) is confirmed: "yes" proceeds', () async {
+      // execute_task is not itself in _destructiveVoiceActions, so this
+      // confirmation only fires because FakeActionHandler simulates
+      // TaskExecutor calling onConfirmRiskyTap mid-task -- proving the
+      // callback threads through execute() correctly, independent of
+      // TaskExecutor's own (separately, not-unit-testable-here) logic.
+      final voice = FakeVoiceService([
+        'open whatsapp and send hello to john',
+        'yes',
+      ]);
+      final ai = FakeAiService(
+        (msg) => streamOf(
+          '{"action": "execute_task", "params": {"goal": "send hello to John"}, "response": "On it"}',
+        ),
+      );
+      bool actionRan = false;
+      final actionHandler = FakeActionHandler(
+        (action) async {
+          actionRan = true;
+          return AgentActionResult(actionType: action.action, success: true, details: 'Sent');
+        },
+        riskyTapDescription: 'Tap "Send"?',
+      );
+
+      final controller = VoiceConversationController(
+        aiService: ai,
+        actionHandler: actionHandler,
+        voiceService: voice,
+      );
+
+      await controller.startTurn();
+
+      expect(actionHandler.riskyTapProceeded, isTrue);
+      expect(actionRan, isTrue);
+      expect(voice.spoken, contains('Tap "Send"? Say yes to confirm, or no to cancel.'));
+    });
+
+    test('risky mid-task tap is confirmed: "no" skips the action', () async {
+      final voice = FakeVoiceService([
+        'open whatsapp and send hello to john',
+        'no',
+      ]);
+      final ai = FakeAiService(
+        (msg) => streamOf(
+          '{"action": "execute_task", "params": {"goal": "send hello to John"}, "response": "On it"}',
+        ),
+      );
+      bool actionRan = false;
+      final actionHandler = FakeActionHandler(
+        (action) async {
+          actionRan = true;
+          return AgentActionResult(actionType: action.action, success: true, details: 'Sent');
+        },
+        riskyTapDescription: 'Tap "Send"?',
+      );
+
+      final controller = VoiceConversationController(
+        aiService: ai,
+        actionHandler: actionHandler,
+        voiceService: voice,
+      );
+
+      await controller.startTurn();
+
+      expect(actionHandler.riskyTapProceeded, isFalse);
+      expect(actionRan, isFalse);
     });
 
     test('progress narration speaks "On it." once and a checkpoint every 4th step, not every step', () async {
