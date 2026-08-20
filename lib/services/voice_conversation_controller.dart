@@ -155,7 +155,22 @@ class VoiceConversationController {
       }
       final text = accumulated.toString();
 
-      final AgentAction? action = aiService.parseAction(text);
+      AgentAction? action = aiService.parseAction(text);
+
+      // Even with the system prompt's explicit JSON-only instruction, a
+      // model can still occasionally just narrate what it's about to do
+      // ("sending a text to DJ saying what up") instead of emitting the
+      // JSON action -- device-reported recurrence, 2026-08-20, even after
+      // resolving the earlier voice-style-hint prompt conflict. Since
+      // prompt wording alone isn't 100% reliable, retry once with an
+      // explicit correction whenever the user's own request clearly looks
+      // like a device-action command but nothing structured came back --
+      // matches TaskExecutor's own established "retry once on a parse
+      // miss" pattern, just one level up.
+      if (action == null && _looksLikeActionRequest(transcript)) {
+        action = await _retryForMissedAction();
+      }
+
       if (action != null) {
         bool proceed = true;
         if (_destructiveVoiceActions.contains(action.action)) {
@@ -205,6 +220,53 @@ class VoiceConversationController {
       await _listenAndRespond(timeout: followUpListenTimeout);
     } else {
       _setState(VoiceConversationState.idle);
+    }
+  }
+
+  /// Keywords mirroring the system prompt's own action vocabulary
+  /// (open_app/make_call/send_sms/set_alarm/set_volume/set_brightness) and
+  /// its "contains 'and'/multi-step → execute_task" rule. Checked against
+  /// the user's own transcript, not the model's reply -- much more
+  /// reliable than trying to detect "this reply sounds like unstructured
+  /// narration" after the fact, since the system prompt already commits
+  /// to exactly when an action should have been triggered.
+  static const List<String> _actionRequestKeywords = [
+    'text', 'message', 'call', 'dial', 'email',
+    'open', 'launch', 'set alarm', 'set an alarm', 'set the volume',
+    'set the brightness', 'turn up', 'turn down', 'search contact',
+  ];
+
+  bool _looksLikeActionRequest(String transcript) {
+    final lower = transcript.toLowerCase();
+    return _actionRequestKeywords.any((k) => lower.contains(k)) ||
+        lower.contains(' and ');
+  }
+
+  /// Sends one corrective follow-up asking the model to reformat its last
+  /// reply as the required JSON action object, for the case described in
+  /// [_looksLikeActionRequest]'s call site. This is a real (if unusual) new
+  /// entry in the conversation history, not a UI-only nudge -- the model
+  /// sees it as the next turn, with its own prior narration still in
+  /// context, which is what lets it "notice" and correct the formatting
+  /// mistake.
+  Future<AgentAction?> _retryForMissedAction() async {
+    const correction =
+        'You just replied in plain text describing a device action instead '
+        'of using the required JSON action format. Respond now with ONLY '
+        'the JSON action object for what you just described -- no '
+        'narration, no extra text.';
+    try {
+      final accumulated = StringBuffer();
+      await for (final chunk in aiService.sendMessageStream(
+        correction,
+        isAgentMode: true,
+        voiceResponseStyle: true,
+      )) {
+        accumulated.write(chunk);
+      }
+      return aiService.parseAction(accumulated.toString());
+    } catch (_) {
+      return null;
     }
   }
 

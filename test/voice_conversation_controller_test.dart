@@ -189,6 +189,91 @@ void main() {
       expect(controller.state, VoiceConversationState.idle);
     });
 
+    test(
+      'a transcript that clearly requests a device action, but gets an '
+      'unstructured plain-text reply, is retried once and then dispatched',
+      () async {
+        // send_sms is itself a destructive action needing its own spoken
+        // confirmation (Phase 7's guard) -- a second queued reply ("yes")
+        // is needed for *that* prompt, separate from the missed-action
+        // retry this test is actually exercising.
+        final voice = FakeVoiceService(['text DJ saying what up', 'yes']);
+        final ai = FakeAiService((msg) {
+          if (msg.contains('required JSON action format')) {
+            // The corrective retry -- the model "notices" and complies.
+            return streamOf(
+              '{"action": "send_sms", "params": {"contact_name": "DJ", "message": "what up"}, "response": "Sending DJ: what up"}',
+            );
+          }
+          // First attempt: plain narration, no JSON at all.
+          return streamOf('Sending a text to DJ saying what up.');
+        });
+        AgentAction? capturedAction;
+        final actionHandler = FakeActionHandler((action) async {
+          capturedAction = action;
+          return AgentActionResult(actionType: action.action, success: true, details: 'Sent');
+        });
+
+        final controller = VoiceConversationController(
+          aiService: ai,
+          actionHandler: actionHandler,
+          voiceService: voice,
+        );
+
+        await controller.startTurn();
+
+        expect(capturedAction?.action, 'send_sms');
+        expect(ai.voiceResponseStyleCalls.length, 2); // original + retry
+        expect(
+          voice.spoken,
+          ['Sending DJ: what up. Say yes to confirm, or no to cancel.', 'Sending DJ: what up'],
+        );
+      },
+    );
+
+    test(
+      'if the retry also comes back unstructured, falls back to speaking the '
+      'original narration rather than crashing or hanging',
+      () async {
+        final voice = FakeVoiceService(['text DJ saying what up']);
+        final ai = FakeAiService(
+          (msg) => streamOf('Sending a text to DJ saying what up.'),
+        );
+
+        final controller = VoiceConversationController(
+          aiService: ai,
+          actionHandler: ActionHandler(),
+          voiceService: voice,
+        );
+
+        await controller.startTurn();
+
+        expect(voice.spoken, ['Sending a text to DJ saying what up.']);
+        expect(controller.state, VoiceConversationState.idle);
+      },
+    );
+
+    test(
+      'an ordinary conversational transcript never triggers the missed-action '
+      'retry (only one LLM call is made)',
+      () async {
+        final voice = FakeVoiceService(["what's the weather like"]);
+        final ai = FakeAiService(
+          (msg) => streamOf("I don't have access to live weather data."),
+        );
+
+        final controller = VoiceConversationController(
+          aiService: ai,
+          actionHandler: ActionHandler(),
+          voiceService: voice,
+        );
+
+        await controller.startTurn();
+
+        expect(ai.voiceResponseStyleCalls.length, 1);
+      },
+    );
+
     test('failed action turn: speaks the action response plus failure details', () async {
       // make_call is a destructive action (confirmed before running as of
       // Phase 7) — queue an affirmative reply so this test still exercises
