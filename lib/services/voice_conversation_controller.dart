@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/agent_action.dart';
 import 'action_handler.dart';
 import 'ai_service.dart';
+import 'task_executor.dart';
 import 'voice_service.dart';
 
 enum VoiceConversationState {
@@ -285,6 +286,14 @@ class VoiceConversationController {
     if (!_progressStartAnnounced && lower.startsWith('starting task')) {
       _progressStartAnnounced = true;
       unawaited(voiceService.speak('On it.'));
+      return;
+    }
+
+    // Always spoken, not just shown as a text bubble — the whole point is
+    // the user's screen is locked, so a silent progress message would
+    // never reach them (device-reported gap, 2026-08-20).
+    if (trimmed == TaskExecutor.unlockPromptMessage) {
+      unawaited(voiceService.speak(trimmed));
       return;
     }
 

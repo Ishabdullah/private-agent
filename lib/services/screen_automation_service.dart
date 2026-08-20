@@ -38,6 +38,18 @@ class ScreenAutomationService {
     } catch (_) {}
   }
 
+  /// Whether the device's screen is currently locked — the accessibility
+  /// service can't meaningfully read or interact with a locked screen, so
+  /// `TaskExecutor` checks this before starting a multi-step task rather
+  /// than silently failing partway through.
+  Future<bool> isScreenLocked() async {
+    try {
+      return await _invoke<bool>('isScreenLocked') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Check if the accessibility service is running
   Future<bool> isServiceRunning() async {
     await logToNative("[ScreenAutomationService] isServiceRunning() CALLED");

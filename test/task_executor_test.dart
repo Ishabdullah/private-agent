@@ -69,9 +69,11 @@ void main() {
   }
 
   final clickedTexts = <String>[];
+  bool screenLocked = false;
 
   setUp(() {
     clickedTexts.clear();
+    screenLocked = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(notificationsChannel, (call) async {
       if (call.method == 'requestNotificationsPermission') return true;
@@ -81,6 +83,8 @@ void main() {
       switch (call.method) {
         case 'isServiceRunning':
           return true;
+        case 'isScreenLocked':
+          return screenLocked;
         case 'dumpScreen':
           return [
             {
@@ -117,6 +121,8 @@ void main() {
   TaskExecutor buildExecutor(
     FakeAiService ai, {
     Future<bool> Function(String description)? onConfirmRiskyTap,
+    Duration unlockWaitTimeout = const Duration(minutes: 2),
+    Duration unlockPollInterval = const Duration(seconds: 3),
   }) {
     return TaskExecutor(
       aiService: ai,
@@ -125,6 +131,8 @@ void main() {
       shizukuService: ShizukuService(),
       notificationService: FakeNotificationService(),
       onConfirmRiskyTap: onConfirmRiskyTap,
+      unlockWaitTimeout: unlockWaitTimeout,
+      unlockPollInterval: unlockPollInterval,
     );
   }
 
@@ -213,4 +221,82 @@ void main() {
       expect(clickedTexts, ['Send']);
     },
   );
+
+  group('locked-screen handling', () {
+    test(
+      'a task started while the screen is locked waits, then proceeds once '
+      'it unlocks within the timeout',
+      () async {
+        screenLocked = true;
+        final ai = FakeAiService([
+          '{"action": "click_text", "params": {"text": "Settings"}, "reasoning": "opening settings", "is_complete": false}',
+          '{"action": "done", "params": {}, "reasoning": "done", "is_complete": true}',
+        ]);
+        final executor = buildExecutor(
+          ai,
+          unlockWaitTimeout: const Duration(seconds: 2),
+          unlockPollInterval: const Duration(milliseconds: 50),
+        );
+
+        // Unlocks shortly after the wait begins, well within the timeout.
+        Future.delayed(const Duration(milliseconds: 150), () {
+          screenLocked = false;
+        });
+
+        await executor.executeTask('tap the profile icon');
+
+        expect(clickedTexts, ['Settings']);
+      },
+    );
+
+    test(
+      'a task started while the screen stays locked past the timeout fails '
+      'clearly instead of attempting to read/tap a screen it cannot see',
+      () async {
+        screenLocked = true; // never unlocks
+        final ai = FakeAiService([
+          '{"action": "click_text", "params": {"text": "Settings"}, "reasoning": "opening settings", "is_complete": false}',
+        ]);
+        final executor = buildExecutor(
+          ai,
+          unlockWaitTimeout: const Duration(milliseconds: 200),
+          unlockPollInterval: const Duration(milliseconds: 50),
+        );
+
+        final result = await executor.executeTask('tap the profile icon');
+
+        expect(clickedTexts, isEmpty);
+        expect(result, contains('screen was locked'));
+      },
+    );
+
+    test(
+      'the unlock prompt is reported via onProgress so voice turns can speak it',
+      () async {
+        screenLocked = true;
+        final ai = FakeAiService([
+          '{"action": "done", "params": {}, "reasoning": "done", "is_complete": true}',
+        ]);
+        final progressMessages = <String>[];
+        final executor = TaskExecutor(
+          aiService: ai,
+          screenService: ScreenAutomationService(),
+          appLauncher: AppLauncherService(),
+          shizukuService: ShizukuService(),
+          notificationService: FakeNotificationService(),
+          unlockWaitTimeout: const Duration(seconds: 1),
+          unlockPollInterval: const Duration(milliseconds: 50),
+          onProgress: progressMessages.add,
+        );
+
+        Future.delayed(const Duration(milliseconds: 100), () {
+          screenLocked = false;
+        });
+
+        await executor.executeTask('tap the profile icon');
+
+        expect(progressMessages, contains(TaskExecutor.unlockPromptMessage));
+      },
+    );
+  });
 }

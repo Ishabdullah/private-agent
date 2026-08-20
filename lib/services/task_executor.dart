@@ -47,19 +47,51 @@ class TaskExecutor {
   bool _cancelled = false;
   Completer<void>? _cancelCompleter;
 
+  final Duration _unlockWaitTimeout;
+  final Duration _unlockPollInterval;
+
   TaskExecutor({
     required AiService aiService,
     required ScreenAutomationService screenService,
     required AppLauncherService appLauncher,
     required ShizukuService shizukuService,
     NotificationService? notificationService,
+    Duration unlockWaitTimeout = const Duration(minutes: 2),
+    Duration unlockPollInterval = const Duration(seconds: 3),
     this.onProgress,
     this.onConfirmRiskyTap,
   }) : _aiService = aiService,
        _screenService = screenService,
        _appLauncher = appLauncher,
        _shizukuService = shizukuService,
-       _notificationService = notificationService ?? NotificationService();
+       _notificationService = notificationService ?? NotificationService(),
+       _unlockWaitTimeout = unlockWaitTimeout,
+       _unlockPollInterval = unlockPollInterval;
+
+  /// Spoken/reported when a task can't proceed because the screen is
+  /// locked. Exact wording matched by
+  /// `VoiceConversationController._maybeNarrateProgress` so it's actually
+  /// spoken for voice turns, not just shown as a silent progress bubble —
+  /// the whole point is the user's screen is off/locked, so a text-only
+  /// notice would never reach them.
+  static const String unlockPromptMessage =
+      'Please unlock your phone so I can continue.';
+
+  /// Polls [ScreenAutomationService.isScreenLocked] every [_unlockPollInterval]
+  /// until the screen unlocks or [_unlockWaitTimeout] elapses. Polling
+  /// (rather than a lock-state broadcast receiver) keeps this entirely
+  /// within TaskExecutor's existing Dart-side lifecycle, with no new
+  /// native component or cross-lifecycle plumbing needed for what's
+  /// fundamentally a "check back every few seconds" wait.
+  Future<bool> _waitForUnlock() async {
+    final deadline = DateTime.now().add(_unlockWaitTimeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (_cancelled) return false;
+      if (!await _screenService.isScreenLocked()) return true;
+      await Future.delayed(_unlockPollInterval);
+    }
+    return !(await _screenService.isScreenLocked());
+  }
 
   static const Set<String> _riskyTapKeywords = {
     'send', 'post', 'tweet', 'publish', 'share', 'submit',
@@ -144,6 +176,30 @@ Rules:
         "[TaskExecutor] Accessibility service not running, returning early.",
       );
       return 'Accessibility service is not enabled. Go to Settings \u2192 Accessibility \u2192 PrivateAgent Screen Control and enable it.';
+    }
+
+    // The accessibility service can't meaningfully read or interact with a
+    // locked screen -- previously this just failed silently/confusingly
+    // partway through a task (device-reported gap, 2026-08-20, notably
+    // surfacing via a wake-word-triggered task since audio itself works
+    // fine while locked). Ask the user to unlock, wait up to
+    // _unlockWaitTimeout, then either proceed or give up with a clear
+    // explanation.
+    if (await _screenService.isScreenLocked()) {
+      _report(unlockPromptMessage);
+      final unlocked = await _waitForUnlock();
+      if (_cancelled) return 'Task cancelled.';
+      if (!unlocked) {
+        await TaskHistoryLogger.logTask(
+          userGoal,
+          'Failed',
+          0,
+          0,
+          ['Screen was locked; task never started.'],
+        );
+        return "I couldn't do that because your screen was locked. "
+            'Unlock your phone and try again.';
+      }
     }
 
     final results = <String>[];

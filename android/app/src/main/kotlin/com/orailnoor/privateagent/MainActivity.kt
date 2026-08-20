@@ -141,6 +141,19 @@ class MainActivity : FlutterActivity() {
                             result.success(AgentAccessibilityService.isRunning())
                         }
 
+                        // TaskExecutor checks this before starting a
+                        // multi-step task: the accessibility service can't
+                        // meaningfully read or interact with a locked
+                        // screen, and previously just failed silently/
+                        // confusingly instead of telling the user to
+                        // unlock (device-reported gap, 2026-08-20).
+                        "isScreenLocked" -> {
+                            val keyguardManager = context.getSystemService(
+                                android.app.KeyguardManager::class.java,
+                            )
+                            result.success(keyguardManager?.isKeyguardLocked ?: false)
+                        }
+
                         "checkOverlayPermission" -> {
                             result.success(Settings.canDrawOverlays(context))
                         }

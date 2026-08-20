@@ -5,6 +5,7 @@ import 'package:private_agent/models/agent_action.dart';
 import 'package:private_agent/models/chat_message.dart';
 import 'package:private_agent/services/action_handler.dart';
 import 'package:private_agent/services/ai_service.dart';
+import 'package:private_agent/services/task_executor.dart';
 import 'package:private_agent/services/voice_conversation_controller.dart';
 import 'package:private_agent/services/voice_service.dart';
 
@@ -555,6 +556,29 @@ void main() {
       // Only "On it." + the step-4 checkpoint + the final spoken response are
       // actually spoken — not every one of the 7 progress messages.
       expect(voice.spoken, ['On it.', 'Still working, step 4.', 'Done with the thing']);
+    });
+
+    test('the locked-screen prompt is spoken, not just shown as a text bubble', () async {
+      final voice = FakeVoiceService(['open the app and do the thing']);
+      final ai = FakeAiService(
+        (msg) => streamOf(
+          '{"action": "execute_task", "params": {"goal": "do the thing"}, "response": "Could not do it"}',
+        ),
+      );
+      final actionHandler = FakeActionHandler(
+        (action) async => AgentActionResult(actionType: action.action, success: false, details: 'locked'),
+        progressMessages: [TaskExecutor.unlockPromptMessage],
+      );
+
+      final controller = VoiceConversationController(
+        aiService: ai,
+        actionHandler: actionHandler,
+        voiceService: voice,
+      );
+
+      await controller.startTurn();
+
+      expect(voice.spoken, contains(TaskExecutor.unlockPromptMessage));
     });
 
     test('cancel() immediately returns the controller to idle', () async {
