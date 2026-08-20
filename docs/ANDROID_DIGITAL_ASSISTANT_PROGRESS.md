@@ -163,7 +163,7 @@ This was a JDK-image-transform failure in the AGP `8.11.1`/Kotlin `2.2.20`/Gradl
 | 2 — Voice state machine (against existing push-to-talk) | Done |
 | 3 — Wake-word engine spike | Done (spike skipped by explicit user decision — Vosk chosen without comparison; see Section 8.3.1 of the plan) |
 | 4 — First-run onboarding (Assistant Identity, Voice Test, Readiness Check) | Done |
-| 5 — Android background service | Done (build-verified; not yet validated on physical hardware — see Phase 16) |
+| 5 — Android background service | Done, confirmed working on real hardware (2026-08-16) |
 | 6 — Speech-to-text continuous/dictation mode | Done |
 | 7 — Agent integration hardening | Done |
 | 8 — Text-to-speech completion | Done |
