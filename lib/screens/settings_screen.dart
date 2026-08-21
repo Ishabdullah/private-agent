@@ -304,7 +304,8 @@ class _SettingsScreenState extends State<SettingsScreen>
     final baseUrl = _baseUrlController.text.trim();
     final apiKey = _apiKeyController.text.trim();
 
-    if (baseUrl.isEmpty || apiKey.isEmpty) {
+    if (baseUrl.isEmpty ||
+        (apiKey.isEmpty && !AiService.isLikelyLocalServer(baseUrl))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enter Base URL and API Key first.'),

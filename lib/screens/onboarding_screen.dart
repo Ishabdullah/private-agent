@@ -244,7 +244,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       return;
     }
 
-    if (_selectedProvider != 'ollama' && apiKey.isEmpty) {
+    if (_selectedProvider != 'ollama' &&
+        _selectedProvider != 'local' &&
+        apiKey.isEmpty) {
       setState(() {
         _validationError = 'API Key is required for this provider.';
         _isValidating = false;
@@ -254,7 +256,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     try {
       final models = await _aiService.fetchAvailableModels(baseUrl, apiKey);
-      if (models.isNotEmpty || _selectedProvider == 'ollama') {
+      if (models.isNotEmpty ||
+          _selectedProvider == 'ollama' ||
+          _selectedProvider == 'local') {
         await _aiService.saveSettings(
           apiKey: apiKey,
           baseUrl: baseUrl,
@@ -1890,7 +1894,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             child: ListView(
               physics: const BouncingScrollPhysics(),
               children: [
-                if (_selectedProvider != 'ollama') ...[
+                if (_selectedProvider != 'ollama' &&
+                    _selectedProvider != 'local') ...[
                   _buildFormTextField(
                     controller: _apiKeyController,
                     label: 'API Key',

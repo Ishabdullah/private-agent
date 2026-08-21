@@ -79,6 +79,7 @@ class AiService {
   int _maxTokens = 1024;
   bool _useScreenCompression = true;
   bool _useSystemPrompt = true;
+  bool _hasSavedAiConfig = false;
   final List<Map<String, String>> _conversationHistory = [];
 
   static const String _systemPrompt = '''
@@ -153,6 +154,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
     _maxTokens = prefs.getInt('api_max_tokens') ?? 1024;
     _useScreenCompression = prefs.getBool('api_use_screen_compression') ?? true;
     _useSystemPrompt = prefs.getBool('api_use_system_prompt') ?? true;
+    _hasSavedAiConfig = prefs.getBool('api_has_saved_config') ?? false;
   }
 
   Future<void> saveSettings({
@@ -179,6 +181,9 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
       _model = model;
       await prefs.setString('api_model', model);
     }
+
+    _hasSavedAiConfig = true;
+    await prefs.setBool('api_has_saved_config', true);
   }
 
   Future<void> saveMaxSteps(int steps) async {
@@ -210,7 +215,18 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
     await prefs.setBool('api_use_system_prompt', useSystemPrompt);
   }
 
-  bool get isConfigured => _apiKey != null && _apiKey!.isNotEmpty;
+  /// A saved API key always counts. Otherwise, only a local/self-hosted
+  /// server (see [isLikelyLocalServer]) that's actually been explicitly
+  /// saved counts — most local llama.cpp/llama-server setups don't require
+  /// auth at all, so requiring a key there would trap those users in
+  /// onboarding for no reason. `_hasSavedAiConfig` (only ever set by
+  /// [saveSettings]) is what stops this from being trivially true before
+  /// the user has configured anything, since `_baseUrl`/`_model` always
+  /// hold non-empty defaults.
+  bool get isConfigured {
+    if (_apiKey != null && _apiKey!.isNotEmpty) return true;
+    return _hasSavedAiConfig && isLikelyLocalServer(_baseUrl) && _model.isNotEmpty;
+  }
   String get baseUrl => _baseUrl;
   String get model => _model;
   String get apiKey => _apiKey ?? '';
@@ -236,6 +252,15 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         }
       : const {};
 
+  /// Bearer auth header, omitted entirely when no key is set — most
+  /// self-hosted llama.cpp/llama-server instances don't require one, and
+  /// sending `Authorization: Bearer` with nothing after it can confuse some
+  /// servers more than sending no header at all.
+  Map<String, String> get _authHeader =>
+      (_apiKey != null && _apiKey!.isNotEmpty)
+          ? {'Authorization': 'Bearer $_apiKey'}
+          : const {};
+
   int get _effectiveMaxTokens {
     // GLM is a reasoning model. With the app's 1,024-token default it can
     // consume the whole budget reasoning and finish without visible content.
@@ -260,7 +285,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
 
   /// Send a message to the AI and get a response.
   Future<String> sendMessage(String message, {bool isAgentMode = true}) async {
-    if (_apiKey == null || _apiKey!.isEmpty) {
+    if (!isConfigured) {
       throw Exception('API Key is not configured. Please go to Settings.');
     }
 
@@ -314,7 +339,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
             Uri.parse(requestUrl),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer $_apiKey',
+              ..._authHeader,
               'HTTP-Referer': 'https://github.com/orailnoor/private-agent',
               'X-Title': 'PrivateAgent',
             },
@@ -389,7 +414,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
     bool isAgentMode = true,
     bool voiceResponseStyle = false,
   }) async* {
-    if (_apiKey == null || _apiKey!.isEmpty) {
+    if (!isConfigured) {
       throw Exception('API Key is not configured. Please go to Settings.');
     }
 
@@ -422,7 +447,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
       final request = http.Request('POST', Uri.parse(requestUrl));
       request.headers.addAll({
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer $_apiKey',
+        ..._authHeader,
         'HTTP-Referer': 'https://github.com/orailnoor/private-agent',
         'X-Title': 'PrivateAgent',
       });
@@ -537,7 +562,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
   /// Send a task execution message — no conversation history, low temperature, limited tokens.
   /// This is much faster and cheaper than sendMessage.
   Future<AiResponse> sendTaskMessage(String systemPrompt, String prompt) async {
-    if (_apiKey == null || _apiKey!.isEmpty) {
+    if (!isConfigured) {
       throw Exception('API Key is not configured. Please go to Settings.');
     }
 
@@ -566,7 +591,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
               Uri.parse(requestUrl),
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer $_apiKey',
+                ..._authHeader,
                 'HTTP-Referer': 'https://github.com/orailnoor/private-agent',
                 'X-Title': 'PrivateAgent',
               },
