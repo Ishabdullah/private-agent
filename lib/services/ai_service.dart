@@ -43,6 +43,26 @@ class AiService {
     return uri?.host.toLowerCase() == 'integrate.api.nvidia.com';
   }
 
+  /// True for loopback/LAN hosts (127.0.0.1, 10.0.2.2, 192.168.x.x, 10.x.x.x,
+  /// 172.16-31.x.x) — the address ranges a self-hosted llama.cpp/llama-server
+  /// instance is reachable at. Used to scope llama.cpp-specific request
+  /// fields (like disabling Qwen3's "thinking" mode) away from cloud
+  /// providers that may reject unrecognized fields.
+  static bool isLikelyLocalServer(String baseUrl) {
+    final host = Uri.tryParse(baseUrl.trim())?.host.toLowerCase() ?? '';
+    if (host.isEmpty) return false;
+    if (host == 'localhost' || host == '127.0.0.1' || host == '10.0.2.2') {
+      return true;
+    }
+    if (host.startsWith('192.168.') || host.startsWith('10.')) return true;
+    final match = RegExp(r'^172\.(\d+)\.').firstMatch(host);
+    if (match != null) {
+      final second = int.tryParse(match.group(1)!) ?? 0;
+      if (second >= 16 && second <= 31) return true;
+    }
+    return false;
+  }
+
   static List<String> filterNvidiaFreeModels(Iterable<String> models) {
     final availableModels = models.toSet();
     return nvidiaFreeChatModels
@@ -202,6 +222,20 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
   bool get useScreenCompression => _useScreenCompression;
   bool get useSystemPrompt => _useSystemPrompt;
 
+  /// Extra top-level request-body fields, spread into every chat-completions
+  /// request. Currently only used to disable Qwen3-style "thinking" mode on
+  /// self-hosted llama.cpp/llama-server backends (see [isLikelyLocalServer])
+  /// — without this, local Qwen3 models spend most of a turn silently
+  /// generating a `<think>...</think>` block that the app already strips
+  /// from the visible response (see the streaming parser below), so it's
+  /// pure wasted latency on slow local hardware. Scoped to local hosts only
+  /// since cloud providers may reject unrecognized request fields.
+  Map<String, dynamic> get _extraRequestFields => isLikelyLocalServer(_baseUrl)
+      ? {
+          'chat_template_kwargs': {'enable_thinking': false},
+        }
+      : const {};
+
   int get _effectiveMaxTokens {
     // GLM is a reasoning model. With the app's 1,024-token default it can
     // consume the whole budget reasoning and finish without visible content.
@@ -262,6 +296,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         'messages': messages,
         'temperature': _temperature,
         'max_tokens': _effectiveMaxTokens,
+        ..._extraRequestFields,
       });
 
       // Debug-only: requestBody is the full conversation (system prompt +
@@ -398,6 +433,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         'temperature': _temperature,
         'max_tokens': _effectiveMaxTokens,
         'stream': true,
+        ..._extraRequestFields,
       });
 
       final response = await client
@@ -539,6 +575,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
                 'messages': messages,
                 'temperature': _temperature,
                 'max_tokens': _effectiveMaxTokens,
+                ..._extraRequestFields,
               }),
             )
             .timeout(const Duration(minutes: 30));
