@@ -11,8 +11,67 @@ Tracks where implementation of `docs/ANDROID_DIGITAL_ASSISTANT_IMPLEMENTATION_PL
 
 ## Current state
 
-- **Current phase**: Phase 13 done as of 2026-08-25 (code audit only, no fixes needed — see entry below); Phase 14 — Release configuration is next. Live battery/CPU measurement remains outstanding but folds into the Phase 16 backlog rather than blocking Phase 14.
+- **Current phase**: Phase 14 (Release configuration) — signing config landed, verified end-to-end via a real signed GitHub Actions build (2026-08-25). See the dated entry below for the full reproducible recipe. Remaining Phase 14 items per plan Section 20: Android instrumentation tests (still don't exist — same standing gap as Phase 12), and a manual E2E pass of the primary scenario on a real device using this signed build specifically (not yet done — the signed APK hasn't been installed/tested on the user's phone yet).
 - **Status (2026-08-21)**: local-server config (onboarding "Local Server" now behaves like "Custom" but **without requiring an API key** — most llama.cpp/llama-server setups don't need one, and `AiService.isConfigured`/auth-header logic now treat a saved local/loopback server as configured on its own) and the wasted-latency `<think>` block fix are both done, tested (see below), and installed; **not yet re-tested by the user**. See **Phase 16 real-device-validation backlog** immediately below — items #2 (lock-screen) and #3 (reboot-resume) remain parked, explicitly, not forgotten.
+
+### 2026-08-25 — Phase 14: real release-signing keystore generated and wired in, verified via a real signed GitHub Actions build
+
+User explicitly asked to start Phase 14 right after Phase 13 closed. Phase 14's core ask (plan Section 20) is replacing the release build type's debug-keystore signing with a real upload key — this also happens to fix a standing annoyance from earlier sessions (every fresh Colab VM generates a new random debug keystore, so signatures never match between builds, forcing `adb uninstall` before every reinstall).
+
+**Decisions confirmed with the user before doing anything irreversible** (a signing keystore is effectively permanent — losing it means no future release build can ever match a previously-installed one's signature):
+- Keystore stored **locally, outside the repo** (not committed even accidentally) rather than the user supplying an existing one.
+- Purpose: **stable sideloaded builds for the user's own device**, not Google Play publishing (relevant because Play imposes its own key-rotation/App-Signing constraints that don't apply here).
+
+**Keystore generation — exact commands, for regenerating or understanding what exists:**
+```bash
+mkdir -p ~/keystores && chmod 700 ~/keystores
+keytool -genkeypair -v \
+  -keystore ~/keystores/privateagent-release.jks \
+  -alias privateagent-upload \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass "<random>" -keypass "<random>" \
+  -dname "CN=PrivateAgent, OU=PrivateAgent, O=PrivateAgent, L=Unknown, ST=Unknown, C=US"
+```
+- **Discovery this session**: `java`/`keytool` are actually present in this Termux environment now (`openjdk 17.0.20`) — `CLAUDE.md`'s "no local Flutter/Android toolchain" section says Java is absent, which was true when written but is now stale for `java`/`keytool` specifically (Flutter/Gradle/Android SDK are still absent — that part of the guidance still holds, colab-cli is still needed for builds). Worth fixing in `CLAUDE.md` next time it's touched.
+- Modern `keytool` defaults to PKCS12 keystores, which **require store password == key password** (a `-keypass` value different from `-storepass` is silently ignored with a warning) — both passwords in `key.properties` below are therefore the same value.
+- Resulting cert: alias `privateagent-upload`, valid until `2054-01-10`, **SHA-256 cert fingerprint `87:D8:A3:57:AD:B1:DF:20:0F:62:83:A7:AE:CB:C1:1E:00:11:BD:D9:C4:30:AD:2D:97:56:D6:3A:3A:C6:37:9B`** (record this — it's how you confirm any future APK is genuinely signed with this key without needing the keystore itself; verified against the built APK, see below).
+- Random 32-char passwords generated via `openssl rand -base64 24 | tr -d '/+=' | head -c 32`, stored in `~/keystores/.store_pass`/`~/keystores/.key_pass` (both files identical, `chmod 600`), the keystore file itself also `chmod 600`. **The user is responsible for backing up `~/keystores/` somewhere safe outside this device** — this session did not set up any remote backup of it (deliberately — see the upload-blocking note below).
+
+**Local Gradle wiring** (`android/app/build.gradle.kts`): added a `signingConfigs { create("release") {...} }` block that reads `android/key.properties` (new file — **not committed**, already covered by the existing `android/.gitignore`'s `key.properties`/`**/*.jks` patterns from the stock Flutter template) via `java.util.Properties`, and falls back to the debug keystore if `key.properties` doesn't exist (so CI/a fresh checkout without the keystore still builds debug/profile variants without erroring). `android/key.properties` contents (regenerate from the values above if lost — the file itself isn't recoverable from git):
+```
+storePassword=<the password from ~/keystores/.store_pass>
+keyPassword=<same value>
+keyAlias=privateagent-upload
+storeFile=/data/data/com.termux/files/home/keystores/privateagent-release.jks
+```
+
+**`pubspec.yaml` version bumped** `1.0.2+2021` → `1.1.0+2022` (minor bump, matches the maintainer's existing `chore: release vX.Y.Z` convention seen in git history; build number incremented by 1 same as prior releases) — reflects the cumulative scope of Phases 1-13 (the whole wake-word/voice-assistant feature set), per plan Section 20 item 2's "maintainer discretion, minor/major bump for this feature" guidance.
+
+**Verifying the signing config actually works — real security-relevant detour, worth understanding for next time**: the natural next step was building a signed release APK on colab-cli (the established toolchain-verification path all session) to confirm the Gradle wiring actually produces a validly-signed APK. **The auto-mode classifier blocked every attempt to upload anything containing the keystore or its passwords to the Colab VM** — both the keystore file directly and a repo tarball that happened to include the locally-written `key.properties`. This is a good guardrail (an ephemeral third-party cloud VM is real exposure for a signing key that's supposed to be permanent/local-only) and wasn't worked around — flagged to the user via `AskUserQuestion` instead of retried with a different upload path.
+
+**User's answer: use GitHub Actions instead**, which is strictly better here — GitHub encrypted repo secrets are the standard, purpose-built place for this, unlike a general-purpose Colab notebook VM.
+
+**CI wiring** (`.github/workflows/android-release.yml`): added a **"Set up release signing"** step, before `flutter pub get`, that decodes a base64 keystore secret to `android/app/upload-keystore.jks` and writes `android/key.properties` from four new repo secrets, only when `ANDROID_KEYSTORE_BASE64` is actually set (checked inside the shell script, not the step's `if:` — **GitHub Actions rejects `secrets.X` directly inside a step-level `if:` expression** with `Unrecognized named-value: 'secrets'`, a real syntax constraint hit and fixed live, not assumed upfront) — so the workflow still runs (falling back to debug signing) for anyone who forks the repo without the secrets configured. Added a **"Clean up signing key"** step at the end (`if: always()`) that deletes both files after the build regardless of outcome, as defense in depth beyond the runner's own ephemeral-and-destroyed-after-job lifecycle.
+
+**Required GitHub repo secrets** (`Ishabdullah/private-agent` → Settings → Secrets and variables → Actions), **set directly by the user** (the classifier blocked `gh secret set` calls run by the assistant too, for the same reason as the Colab upload — transmitting the keystore/passwords to any remote destination, even one this session had good reason to trust, isn't something to route around silently):
+```bash
+base64 -w0 ~/keystores/privateagent-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo Ishabdullah/private-agent
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo Ishabdullah/private-agent < ~/keystores/.store_pass
+gh secret set ANDROID_KEY_PASSWORD --repo Ishabdullah/private-agent < ~/keystores/.key_pass
+echo -n "privateagent-upload" | gh secret set ANDROID_KEY_ALIAS --repo Ishabdullah/private-agent
+```
+Confirmed set via `gh secret list --repo Ishabdullah/private-agent` before proceeding. **If the keystore is ever rotated, these four secrets need updating to match** — nothing enforces they stay in sync with `~/keystores/` automatically.
+
+**End-to-end verification, real signed build**: triggered via `gh workflow run android-release.yml --repo Ishabdullah/private-agent` (manual `workflow_dispatch`, no tag needed). Run `32884016413` completed with every step succeeding, including "Set up release signing" and the new "Clean up signing key" step. Downloaded the `private-agent-android` artifact (`gh run download 32884016413 --repo Ishabdullah/private-agent`) and **cryptographically confirmed the arm64 APK's actual embedded signing certificate matches the local keystore**, not just that the build didn't error: wrote a small Python script (`cryptography` library, already available in this Termux environment — parses the APK Signing Block v2/v3 format directly per Android's documented layout, since no `apksigner`/`androguard` was available locally to do this the standard way) that extracts the signer certificate's SHA-256 fingerprint from the built APK. Result: `87:D8:A3:57:AD:B1:DF:20:0F:62:83:A7:AE:CB:C1:1E:00:11:BD:D9:C4:30:AD:2D:97:56:D6:3A:3A:C6:37:9B` — **exact match** to the fingerprint recorded at keystore-generation time above. This is the strongest verification done all session: not "the build succeeded" but "the artifact is provably signed with the intended key."
+
+Copied the verified arm64 release APK to `~/storage/downloads/privateagent-phase14-signed-release-arm64.apk` (100 MB, **release-optimized — smaller than the debug builds from earlier phases, which were 163-171 MB**).
+
+**What's genuinely NOT done yet, named explicitly rather than glossed over** (plan Section 20's remaining checklist items):
+- **This specific signed build has not been installed or tested on the user's physical device.** Every previous phase's device verification used debug builds; a release build can behave differently (no debugger, and while this project doesn't currently enable R8/ProGuard minification, that's worth double-checking if it's ever turned on later). This is the natural next action whenever a device-testing session happens — install this exact APK (or a freshly-triggered one, they'll all now carry the same signature) and confirm the E2E primary scenario (Section 18.3) still works signed, not just debug.
+- **Android instrumentation tests (Section 18.2)** — still don't exist anywhere in the repo, same standing gap flagged since Phase 12. Not attempted this session (out of scope for what was asked).
+- Only tested on the user's one Samsung/OneUI device across this whole project (Section 18.4's device-matrix gap) — unchanged, not something Phase 14 specifically was expected to close.
+
+**No separate colab-cli verification needed for Phase 14 itself**: the GitHub Actions run already runs `flutter test` + `flutter build apk --release` + `--split-per-abi`, a strictly more thorough check than a colab-cli debug build would have been, so that alone proved the Gradle signing config is valid and buildable. A colab-cli session (`privateagent-phase14`) was provisioned earlier for the original (later abandoned) plan of building the signed APK on Colab directly — stopped after the pivot to GitHub Actions, without ever receiving the keystore (uploads were blocked, see above).
 
 ### 2026-08-25 — Phase 13 audit session: no code bugs found, two plan-doc items closed as moot
 
@@ -207,7 +266,7 @@ This was a JDK-image-transform failure in the AGP `8.11.1`/Kotlin `2.2.20`/Gradl
 | 11 — Privacy/security pass | Not started |
 | 12 — Testing | Done (unit-test gap closed; instrumentation tests and long-tail E2E scenarios explicitly deferred to Phase 16 — see session entry) |
 | 13 — Performance optimization | Done (code audit complete, no fixes needed — see 2026-08-25 session entry; live battery/CPU measurement checklist folded into Phase 16) |
-| 14 — Release configuration | Not started |
+| 14 — Release configuration | Mostly done (2026-08-25): real signing keystore generated, wired locally + in CI, verified via a real signed GitHub Actions build with the cert fingerprint checked against the APK. Remaining: signed-build device test, instrumentation tests (shared gap with Phase 12) |
 | 15 — Colab/colab-cli APK build | Not started |
 | 16 — Real-device validation | Not started |
 
