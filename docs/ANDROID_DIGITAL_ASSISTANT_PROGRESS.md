@@ -11,8 +11,34 @@ Tracks where implementation of `docs/ANDROID_DIGITAL_ASSISTANT_IMPLEMENTATION_PL
 
 ## Current state
 
-- **Current phase**: Phase 13 — Performance optimization
-- **Status (2026-08-21)**: local-server config (onboarding "Local Server" now behaves like "Custom" but **without requiring an API key** — most llama.cpp/llama-server setups don't need one, and `AiService.isConfigured`/auth-header logic now treat a saved local/loopback server as configured on its own) and the wasted-latency `<think>` block fix are both done, tested (see below), and installed; **not yet re-tested by the user**. See **Phase 16 real-device-validation backlog** immediately below for the standing checklist — this is the last thing before starting Phase 13 for real.
+- **Current phase**: Phase 13 done as of 2026-08-25 (code audit only, no fixes needed — see entry below); Phase 14 — Release configuration is next. Live battery/CPU measurement remains outstanding but folds into the Phase 16 backlog rather than blocking Phase 14.
+- **Status (2026-08-21)**: local-server config (onboarding "Local Server" now behaves like "Custom" but **without requiring an API key** — most llama.cpp/llama-server setups don't need one, and `AiService.isConfigured`/auth-header logic now treat a saved local/loopback server as configured on its own) and the wasted-latency `<think>` block fix are both done, tested (see below), and installed; **not yet re-tested by the user**. See **Phase 16 real-device-validation backlog** immediately below — items #2 (lock-screen) and #3 (reboot-resume) remain parked, explicitly, not forgotten.
+
+### 2026-08-25 — Phase 13 audit session: no code bugs found, two plan-doc items closed as moot
+
+Phase 13's own Section 17 is mostly a "measure on a real device" checklist rather than a build list, and the user had just asked to hold off on further device-testing sessions (Phase 16 backlog #2/#3) — so this session did the achievable, non-device-dependent half of Phase 13: a code audit against every Section 17 item, rather than proposing new device-measurement work that would read as re-litigating the user's "hold off" instruction.
+
+**What was checked, and the result of each:**
+1. **Does `resumeListening()` (called after every voice turn) reload the ~14 MB sherpa-onnx model?** No — checked `VoiceAssistantForegroundService.kt`: `kws` is only released in `onDestroy()`; the stop/resume path between wake events (`stopSpotting()`→`releaseAudioResources()`, then `startSpotting()` again via `ACTION_START`) never touches `kws`, so the model loads once per service lifetime, not once per wake. No fix needed.
+2. **Vosk duty-cycling (Section 17's other named item)** — moot. Vosk was superseded by sherpa-onnx back in Phase 3/5b (decision log), so there's no Vosk fallback in the shipped code for a duty-cycling optimization to apply to.
+3. **Second background Flutter engine RAM cost (Section 17's third named item)** — moot. The plan said to prototype-and-measure this trade-off in Phase 5; what actually shipped adopted the cheaper alternative outright (pure-Kotlin KWS loop, Dart only spins up on an actual detected command) rather than needing a Phase 13 decision.
+4. **Telegram background polling** (not in Section 17, but the app's other always-on background consumer, per `CLAUDE.md`'s `telegram_service.dart` description) — reviewed `_pollUpdates`: standard Bot-API long-polling (30s server-side timeout, 1s gap between calls), the vendor-recommended pattern, only running when opted in. Not a tight loop, no fix needed.
+5. **Thread priority / `PARTIAL_WAKE_LOCK` on the KWS recording thread** — deliberately **not** added. Thread priority is a jitter/dropped-read concern, not a battery one; a wake lock would be guarding against a *correctness* symptom (detection failing after long screen-off, already tracked as a Phase 16 item) not a perf one — and this codebase has already been burned once by adding defensive code speculatively without a reproduced failure (the Phase 9 fallback-timer bug that caused the exact class of problem it was meant to prevent). Not adding either without a real measured reason to.
+
+**Plan doc updated** (Section 17, `docs/ANDROID_DIGITAL_ASSISTANT_IMPLEMENTATION_PLAN.md`): the Vosk and background-Flutter-engine bullets are marked resolved-as-moot in place (struck through, not deleted, with the reasoning), and the model-reload/Telegram-polling findings above were added as new bullets, per the plan's own "living document" rule.
+
+**Real fix landed, not just an audit finding**: `TelegramService._pollUpdates`'s error path retried every 1 second on *any* failure (bad token, no connectivity), bypassing the Bot API's own 30s long-poll hold — an unbounded battery/network drain for as long as the failure condition persists, exactly the always-on background cost Section 17 exists to catch. Added exponential backoff on the failure path only (1s → capped at 60s, `_consecutiveFailures` reset to 0 on any successful response), happy-path timing unchanged. Also found and fixed a token-leak risk in the same file: both `_pollUpdates`'s and `_sendMessage`'s `catch` blocks unconditionally `print`ed the caught exception, and `http`'s `ClientException` commonly embeds the request URI (which contains the bot token) in its message — this would reach release-build logcat, the exact class of leak Phase 11's `kDebugMode`-gating audit was supposed to catch but didn't, since it never looked at this file. Both catches are now `kDebugMode`-gated and log only `e.runtimeType`, never the exception body.
+
+**Verified via colab-cli** (fresh session `privateagent-phase13b` — the first attempt, `privateagent-phase13`, hit the known intermittent session-drop issue documented in the 2026-08-18 Phase 9 entry; re-provisioned rather than chased it): Dart-only toolchain (no native/manifest changes, so no Android SDK/JDK/Gradle needed — same call made for Phases 6/7/10b). `flutter pub get` clean, `flutter test` **98/98 passing** (unchanged count — no new test files, this is prompt-adjacent battery/logging hardening with no independently-testable new logic), `flutter analyze` **153 issues** (down from the prior 155-ish baseline by 2, from the two `avoid_print` lints this session's `kDebugMode` gating actually fixed — confirmed zero remaining hits anywhere in `telegram_service.dart`). No APK build needed. Colab session stopped after verification.
+
+**Net position**: Phase 13 has no outstanding code work — everything in its scope that's checkable without a live device is either already fine or architecturally moot. What's left is pure measurement (see checklist below), which needs the user's phone and was explicitly deferred this session, not silently dropped.
+
+**Prepared checklist for the next live-adb session** (not requested now — for whenever Phase 16 backlog work resumes):
+- **Highest-value, shortest**: does wake-word detection still work after 30+ minutes with the screen off/idle? (Tests the "screen-off handoff gap" already flagged as a Phase 16 unknown — this is a correctness check that happens to live in the same measurement session as the items below, not new Phase 13 scope.)
+- Idle CPU% of the KWS loop via `adb shell dumpsys cpuinfo` / `top`, screen on vs. off.
+- Battery delta over a few hours of idle background listening (`dumpsys batterystats`), compared to the same period with background listening off, as the empirical check Section 17 asks for instead of trusting vendor figures.
+
+**Next concrete action**: Phase 13 can be marked done on the same "achievable work closed, unmeasured items named and owned by Phase 16" basis Phase 12 used — nothing here blocks moving to Phase 14 (Release configuration) whenever the user wants to. The three-item measurement checklist above folds into the existing Phase 16 backlog rather than being a separate list to track.
 
 ### Phase 16 real-device-validation backlog (rewritten 2026-08-21 — supersedes scattered earlier mentions)
 
@@ -180,7 +206,7 @@ This was a JDK-image-transform failure in the AGP `8.11.1`/Kotlin `2.2.20`/Gradl
 | 10 — Settings UI | Done |
 | 11 — Privacy/security pass | Not started |
 | 12 — Testing | Done (unit-test gap closed; instrumentation tests and long-tail E2E scenarios explicitly deferred to Phase 16 — see session entry) |
-| 13 — Performance optimization | Not started |
+| 13 — Performance optimization | Done (code audit complete, no fixes needed — see 2026-08-25 session entry; live battery/CPU measurement checklist folded into Phase 16) |
 | 14 — Release configuration | Not started |
 | 15 — Colab/colab-cli APK build | Not started |
 | 16 — Real-device validation | Not started |

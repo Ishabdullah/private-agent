@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'action_handler.dart';
@@ -9,12 +11,15 @@ import 'secure_secret_store.dart';
 class TelegramService {
   final ActionHandler _actionHandler;
   final AiService _aiService;
-  
+
+  static const int _maxBackoffSeconds = 60;
+
   String _botToken = '';
   bool _isEnabled = false;
   int _lastUpdateId = 0;
   bool _isPolling = false;
   Timer? _pollingTimer;
+  int _consecutiveFailures = 0;
 
   TelegramService(this._actionHandler, this._aiService);
 
@@ -84,20 +89,36 @@ class TelegramService {
             if (update['message'] != null && update['message']['text'] != null) {
               final text = update['message']['text'];
               final chatId = update['message']['chat']['id'];
-              
+
               // Process message asynchronously so we don't block the polling loop
               _handleIncomingMessage(chatId.toString(), text);
             }
           }
         }
+        _consecutiveFailures = 0;
+      } else {
+        _consecutiveFailures++;
+        if (kDebugMode) {
+          print('Telegram polling error: HTTP ${response.statusCode}');
+        }
       }
     } catch (e) {
-      print('Telegram polling error: $e');
+      _consecutiveFailures++;
+      // Never log the exception itself: http's ClientException commonly
+      // embeds the request URI, which contains the bot token.
+      if (kDebugMode) {
+        print('Telegram polling error: ${e.runtimeType}');
+      }
     }
 
-    // Continue polling
+    // Continue polling. A failing request (bad token, no connectivity) skips
+    // the API's own 30s long-poll hold, so without backoff this would retry
+    // once a second indefinitely - back off exponentially on failure instead.
     if (_isPolling) {
-      _pollingTimer = Timer(const Duration(seconds: 1), _pollUpdates);
+      final delaySeconds = _consecutiveFailures == 0
+          ? 1
+          : min(1 << _consecutiveFailures, _maxBackoffSeconds);
+      _pollingTimer = Timer(Duration(seconds: delaySeconds), _pollUpdates);
     }
   }
 
@@ -145,7 +166,11 @@ class TelegramService {
         }),
       );
     } catch (e) {
-      print('Failed to send telegram message: $e');
+      // Never log the exception itself: http's ClientException commonly
+      // embeds the request URI, which contains the bot token.
+      if (kDebugMode) {
+        print('Failed to send telegram message: ${e.runtimeType}');
+      }
     }
   }
 
