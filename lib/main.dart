@@ -7,6 +7,8 @@ import 'config/feature_flags.dart';
 import 'screens/home_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'overlay_main.dart';
+import 'services/wake_word_settings_service.dart';
+import 'services/voice_assistant_foreground_service.dart';
 
 @pragma("vm:entry-point")
 void overlayMain() {
@@ -63,6 +65,17 @@ void main() async {
     themeNotifier.value = ThemeMode.dark;
   } else {
     themeNotifier.value = ThemeMode.light;
+  }
+
+  // Auto-start wake word background service if configured
+  final wakeWordService = WakeWordSettingsService();
+  final config = await wakeWordService.loadConfig();
+  if (config != null && config.enabled) {
+    try {
+      await VoiceAssistantForegroundService.start();
+    } catch (e) {
+      log("Failed to start VoiceAssistantForegroundService: $e");
+    }
   }
 
   final onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
