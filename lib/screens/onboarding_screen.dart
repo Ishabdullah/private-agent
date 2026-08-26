@@ -215,6 +215,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       } else if (provider == 'local') {
         _baseUrlController.text = 'http://10.0.2.2:1234/v1';
         _modelController.text = 'qwen2.5-7b-instruct';
+      } else if (provider == 'google') {
+        _baseUrlController.text = AiService.googleAiBaseUrl;
+        _modelController.text = AiService.googleAiDefaultModel;
       } else {
         _baseUrlController.clear();
         _modelController.clear();
@@ -1862,6 +1865,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   'nvidia',
                   'NVIDIA',
                   Icons.memory_rounded,
+                  isDark,
+                ),
+                const SizedBox(width: 10),
+                _buildProviderCard(
+                  'google',
+                  'Google AI',
+                  Icons.auto_awesome_rounded,
                   isDark,
                 ),
                 const SizedBox(width: 10),
