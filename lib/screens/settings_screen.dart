@@ -657,6 +657,20 @@ class _SettingsScreenState extends State<SettingsScreen>
                     },
                   ),
                   ActionChip(
+                    avatar: const Icon(Icons.auto_awesome_rounded, size: 16),
+                    label: const Text(
+                      'Google AI',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    tooltip:
+                        'Gemini via Google AI Studio (OpenAI-compatible)',
+                    onPressed: () {
+                      _baseUrlController.text = AiService.googleAiBaseUrl;
+                      _modelController.text = AiService.googleAiDefaultModel;
+                    },
+                  ),
+
+                  ActionChip(
                     label: const Text('Custom', style: TextStyle(fontSize: 11)),
                     tooltip: 'Clear fields',
                     onPressed: () {

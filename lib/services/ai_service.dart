@@ -43,6 +43,20 @@ class AiService {
     return uri?.host.toLowerCase() == 'integrate.api.nvidia.com';
   }
 
+  // ── Google AI (Gemini via OpenAI-compatible layer) ──────────────────────
+  /// The OpenAI-compatible base URL for Google AI Studio / Gemini models.
+  static const String googleAiBaseUrl =
+      'https://generativelanguage.googleapis.com/v1beta/openai';
+  static const String googleAiDefaultModel = 'gemini-2.5-flash';
+
+  /// True when the base URL points to Google AI (Gemini) endpoints.
+  /// Handles both the AI Studio endpoint and the Vertex AI platform endpoint.
+  static bool isGoogleAiBaseUrl(String baseUrl) {
+    final host = Uri.tryParse(baseUrl.trim())?.host.toLowerCase() ?? '';
+    return host == 'generativelanguage.googleapis.com' ||
+        host == 'aiplatform.googleapis.com';
+  }
+
   /// True for loopback/LAN hosts (127.0.0.1, 10.0.2.2, 192.168.x.x, 10.x.x.x,
   /// 172.16-31.x.x) — the address ranges a self-hosted llama.cpp/llama-server
   /// instance is reachable at. Used to scope llama.cpp-specific request
@@ -252,14 +266,19 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         }
       : const {};
 
-  /// Bearer auth header, omitted entirely when no key is set — most
-  /// self-hosted llama.cpp/llama-server instances don't require one, and
-  /// sending `Authorization: Bearer` with nothing after it can confuse some
-  /// servers more than sending no header at all.
-  Map<String, String> get _authHeader =>
-      (_apiKey != null && _apiKey!.isNotEmpty)
-          ? {'Authorization': 'Bearer $_apiKey'}
-          : const {};
+  /// Auth headers for the current provider.
+  ///
+  /// * Google AI (Gemini) endpoints expect `x-goog-api-key: <key>` rather
+  ///   than `Authorization: Bearer <key>`.
+  /// * All other providers use the standard `Authorization: Bearer <key>`
+  ///   header, omitted entirely when no key is set.
+  Map<String, String> get _authHeader {
+    if (_apiKey == null || _apiKey!.isEmpty) return const {};
+    if (isGoogleAiBaseUrl(_baseUrl)) {
+      return {'x-goog-api-key': _apiKey!};
+    }
+    return {'Authorization': 'Bearer $_apiKey'};
+  }
 
   int get _effectiveMaxTokens {
     // GLM is a reasoning model. With the app's 1,024-token default it can
@@ -758,9 +777,13 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         cleanBaseUrl = cleanBaseUrl.replaceAll('/chat/completions', '');
       }
 
+      final authHeaders = isGoogleAiBaseUrl(cleanBaseUrl)
+          ? {'x-goog-api-key': apiKey}
+          : {'Authorization': 'Bearer $apiKey'};
+
       final response = await http.get(
         Uri.parse('$cleanBaseUrl/models'),
-        headers: {'Authorization': 'Bearer $apiKey'},
+        headers: authHeaders,
       );
 
       if (response.statusCode == 200) {
