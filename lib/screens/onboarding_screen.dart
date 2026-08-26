@@ -261,7 +261,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       final models = await _aiService.fetchAvailableModels(baseUrl, apiKey);
       if (models.isNotEmpty ||
           _selectedProvider == 'ollama' ||
-          _selectedProvider == 'local') {
+          _selectedProvider == 'local' ||
+          _selectedProvider == 'google') {
         await _aiService.saveSettings(
           apiKey: apiKey,
           baseUrl: baseUrl,
