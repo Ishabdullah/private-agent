@@ -179,7 +179,6 @@ class ScreenAutomationService {
       }
 
       buffer.writeln('  [$index] $type $label $tagStr$boundsStr');
-      count++;
     }
 
     return buffer.toString();

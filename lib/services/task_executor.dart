@@ -499,14 +499,13 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
             );
           }
 
-          String jsonStr = extractTaskActionJson(retryResponse.content);
+          final jsonStr = extractTaskActionJson(retryResponse.content);
           actionJson = jsonDecode(jsonStr) as Map<String, dynamic>;
-          parsedJsonStr = jsonStr;
         } catch (e) {
           results.add('Step ${step + 1}: Error after retry: $e');
 
-          String debugInfo = 'Error: $e';
-          _report('AI Error: $debugInfo\n\nRaw output:\n${response}');
+          final debugInfo = 'Error: $e';
+          _report('AI Error: $debugInfo\n\nRaw output:\n$response');
 
           await _notificationService.showTaskCompleteNotification(
             'Task Error',
