@@ -140,8 +140,6 @@ class ScreenAutomationService {
       buffer.writeln('Current app: $pkg');
     }
     buffer.writeln('Screen elements:');
-
-    int count = 0;
     // Limit removed as requested by user. Kotlin now filters invisibles, so this is safe.
 
     for (final node in nodes) {

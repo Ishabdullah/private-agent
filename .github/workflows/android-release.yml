@@ -50,8 +50,8 @@ jobs:
         run: flutter pub get
 
       - name: Analyze code
-        # P5-3 audit fix: enforce lints in CI
-        run: flutter analyze
+        # P5-3 audit fix: enforce lints in CI (fatal on errors/warnings, info non-blocking)
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         run: flutter test

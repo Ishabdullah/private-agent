@@ -379,9 +379,10 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         final aiFuture = _aiService.sendTaskMessage(_taskSystemPrompt, prompt);
 
         // Race: whichever finishes first wins
-        final result = await Future.any([
-          aiFuture.then((r) => r),
-          _cancelCompleter!.future.then((_) => null),
+        final result = await Future.any<AiResponse?>([
+          aiFuture,
+          if (_cancelCompleter != null)
+            _cancelCompleter!.future.then((_) => null),
         ]);
 
         if (result == null || _cancelled) {
@@ -402,7 +403,7 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
           return 'Task cancelled.';
         }
 
-        final aiResponse = result as AiResponse;
+        final aiResponse = result;
         response = aiResponse.content;
         totalTokens += aiResponse.totalTokens;
 
@@ -449,7 +450,7 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         return 'I could not complete the task because the AI service failed.';
       }
 
-      // Check for cancellation after AI response
+      // Check cancellation before parsing or executing
       if (_cancelled) {
         results.add('Task cancelled by user.');
         _report('Task cancelled.');
@@ -465,18 +466,15 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
           results,
         );
         await _screenService.showToast('Task Cancelled');
-        await Future.delayed(const Duration(seconds: 2));
         return 'Task cancelled.';
       }
 
       // 4. Parse the action (with one retry on failure)
       Map<String, dynamic>? actionJson;
-      String? parsedJsonStr;
       try {
-        String jsonStr = extractTaskActionJson(response);
+        final jsonStr = extractTaskActionJson(response);
 
         actionJson = jsonDecode(jsonStr) as Map<String, dynamic>;
-        parsedJsonStr = jsonStr;
       } catch (firstError) {
         // First attempt failed — retry once
         if (kDebugMode) {
