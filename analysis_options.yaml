@@ -1,5 +1,10 @@
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    - "local_plugins/**"
+    - "build/**"
+    - "**/*.g.dart"
 # P5-4 audit fix: enforce strict production linting rules
 linter:
   rules:

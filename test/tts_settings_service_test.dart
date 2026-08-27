@@ -20,7 +20,7 @@ void main() {
 
   test('saveSettings then loadSettings round-trips all fields', () async {
     final service = TtsSettingsService();
-    final original = const TtsSettings(
+    const original = TtsSettings(
       rate: 0.8,
       pitch: 1.4,
       volume: 0.6,
