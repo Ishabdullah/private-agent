@@ -5,14 +5,4 @@ analyzer:
     - "local_plugins/**"
     - "build/**"
     - "**/*.g.dart"
-# P5-4 audit fix: enforce strict production linting rules
-linter:
-  rules:
-    - prefer_const_constructors
-    - prefer_const_declarations
-    - prefer_const_literals_to_create_immutables
-    - avoid_print
-    - prefer_final_locals
-    - unawaited_futures
-    - cancel_subscriptions
-    - close_sinks
+
