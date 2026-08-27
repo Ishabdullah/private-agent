@@ -119,10 +119,16 @@ class VoiceConversationController {
   }
 
   /// Cancels the current turn and returns to Idle.
+  ///
+  /// P0-5 audit fix: also cancels the running TaskExecutor (if any) via
+  /// [actionHandler.cancelTask], so automation stops immediately instead
+  /// of continuing to tap/type/send in the background after the user
+  /// said to stop.
   void cancel() {
     _cancelled = true;
     voiceService.stopListening();
     voiceService.stopSpeaking();
+    actionHandler.cancelTask();
     _setState(VoiceConversationState.idle);
   }
 

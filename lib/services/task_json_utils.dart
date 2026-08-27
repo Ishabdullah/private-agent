@@ -9,10 +9,22 @@ String extractTaskActionJson(String text) {
     return match.group(1)!;
   }
 
-  // 2. Fallback: find the first { and the last }
+  // 2. Fallback (P1-7 audit fix): extract the first balanced { ... } block to avoid trailing conversation braces breaking parsing
   final startIndex = text.indexOf('{');
-  final endIndex = text.lastIndexOf('}');
-  if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+  if (startIndex == -1) return text.trim();
+
+  int braceCount = 0;
+  int endIndex = -1;
+  for (int i = startIndex; i < text.length; i++) {
+    if (text[i] == '{') braceCount++;
+    if (text[i] == '}') braceCount--;
+    if (braceCount == 0) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  if (endIndex != -1) {
     return text.substring(startIndex, endIndex + 1);
   }
 

@@ -84,24 +84,30 @@ class ChatHistoryService {
     }
   }
 
+  // P1-2 audit fix: Write lock to serialize disk writes and prevent race condition data loss
+  static Future<void> _writeLock = Future.value();
+
   /// Saves a session. Overwrites if ID already exists.
-  static Future<void> saveSession(ChatSession session) async {
-    try {
-      final file = await _localFile;
-      List<ChatSession> sessions = await loadSessions();
+  static Future<void> saveSession(ChatSession session) {
+    _writeLock = _writeLock.then((_) async {
+      try {
+        final file = await _localFile;
+        List<ChatSession> sessions = await loadSessions();
 
-      final index = sessions.indexWhere((s) => s.id == session.id);
-      if (index >= 0) {
-        sessions[index] = session;
-      } else {
-        sessions.insert(0, session); // Newest first
+        final index = sessions.indexWhere((s) => s.id == session.id);
+        if (index >= 0) {
+          sessions[index] = session;
+        } else {
+          sessions.insert(0, session); // Newest first
+        }
+
+        final jsonList = sessions.map((s) => s.toJson()).toList();
+        await file.writeAsString(jsonEncode(jsonList));
+      } catch (e) {
+        print('Error saving chat session: $e');
       }
-
-      final jsonList = sessions.map((s) => s.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList));
-    } catch (e) {
-      print('Error saving chat session: $e');
-    }
+    }).catchError((_) {});
+    return _writeLock;
   }
 
   /// Loads all saved chat sessions.
@@ -124,28 +130,34 @@ class ChatHistoryService {
   }
 
   /// Deletes a specific session.
-  static Future<void> deleteSession(String id) async {
-    try {
-      final file = await _localFile;
-      List<ChatSession> sessions = await loadSessions();
-      sessions.removeWhere((s) => s.id == id);
+  static Future<void> deleteSession(String id) {
+    _writeLock = _writeLock.then((_) async {
+      try {
+        final file = await _localFile;
+        List<ChatSession> sessions = await loadSessions();
+        sessions.removeWhere((s) => s.id == id);
 
-      final jsonList = sessions.map((s) => s.toJson()).toList();
-      await file.writeAsString(jsonEncode(jsonList));
-    } catch (e) {
-      print('Error deleting chat session: $e');
-    }
+        final jsonList = sessions.map((s) => s.toJson()).toList();
+        await file.writeAsString(jsonEncode(jsonList));
+      } catch (e) {
+        print('Error deleting chat session: $e');
+      }
+    }).catchError((_) {});
+    return _writeLock;
   }
 
   /// Clears all saved chat sessions.
-  static Future<void> clearAll() async {
-    try {
-      final file = await _localFile;
-      if (await file.exists()) {
-        await file.delete();
+  static Future<void> clearAll() {
+    _writeLock = _writeLock.then((_) async {
+      try {
+        final file = await _localFile;
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        print('Error clearing chat sessions: $e');
       }
-    } catch (e) {
-      print('Error clearing chat history: $e');
-    }
+    }).catchError((_) {});
+    return _writeLock;
   }
 }

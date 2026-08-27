@@ -24,6 +24,26 @@ Do not treat the plan document as static — if implementation reveals the plan'
 - **Keep `README.md` (and any other user-facing docs) up to date** as implementation progresses — this is not optional cleanup, treat it as part of finishing a unit of work whenever a change affects what's documented there (new dependencies, new features, changed commands/setup steps, etc.).
 - **Durable instructions the user gives you belong in this file.** If the user tells you to remember something that should apply across sessions (a preference, a rule, a workflow), add it to `CLAUDE.md` — don't rely on chat memory alone.
 
+### Mandatory agent pipeline (apply to all non-trivial work)
+
+All significant implementation work on this project must flow through these 5 agents **in order**. They are adapted from the user's `~/Ipto/agents/` definitions:
+
+1. **Researcher** (read-only) — Investigates the codebase and best practices before decisions. Skippable for routine fixes where no research question is raised.
+2. **Architect** (read-only) — Converts findings into concrete, minimal fix/feature plans. Defines the exact approach. Skeptical by default — challenges complexity.
+3. **Implementer** (write access) — Implements exactly what the Architect specified. No independent architectural decisions. No scope creep.
+4. **Code Reviewer** (read-only) — Reviews the implementation critically. Watches for correctness bugs, scope creep, unnecessary complexity, and whether the fix actually solves the problem.
+5. **Live Verifier** (write access) — Verifies the fix works. Trusts execution, not descriptions. Checks for regressions and flags what needs device testing.
+
+**When to skip steps**: For simple one-line fixes (e.g., adding `await`, changing `true` to `false`, adding a `.gitignore` line), the Architect and Implementer can be collapsed into a single step, but the Code Reviewer and Live Verifier steps should still run. The Researcher step is only needed when there's genuine ambiguity about the right approach.
+
+**Model selection guidelines for subagents**:
+- **Architect**: `pro` (High-reasoning model required for architectural integrity, edge-case evaluation, and trade-offs)
+- **Implementer**: `flash` or `pro` (Use `flash` for clean, well-specified, standard edits; `pro` for complex multi-file refactors or native engine code)
+- **Code Reviewer**: `pro` (High reasoning needed to detect subtle edge cases, concurrency hazards, and leaks)
+- **Researcher**: `flash` (Fast, cost-effective read & search operations)
+- **Live Verifier**: `flash` (Syntax checks, test assertions, and log analysis)
+
+
 ## Commands
 
 ```bash

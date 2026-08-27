@@ -111,11 +111,14 @@ class MessageBubble extends StatelessWidget {
               MarkdownBody(
                 data: message.content,
                 selectable: true,
-                onTapLink: (text, href, title) {
+                onTapLink: (text, href, title) async {
                   if (href == null) return;
                   final uri = Uri.tryParse(href);
                   if (uri == null) return;
-                  launchUrl(uri, mode: LaunchMode.externalApplication);
+                  // P3-6 audit fix: wrap in try-catch to handle missing browser/app
+                  try {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } catch (_) {}
                 },
                 styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
                   p: TextStyle(

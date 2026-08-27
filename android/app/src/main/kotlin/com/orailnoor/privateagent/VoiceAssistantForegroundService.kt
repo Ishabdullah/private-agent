@@ -162,32 +162,46 @@ class VoiceAssistantForegroundService : Service() {
         }
 
         try {
-            if (kws == null) {
-                kws = loadKeywordSpotter()
-            }
-            val spotter = kws ?: return
-            stream = spotter.createStream(tokens)
-            if (stream?.ptr == 0L) {
-                android.util.Log.e("VoiceAssistant", "Failed to create KWS stream for $name")
-                return
-            }
-
-            val minBufferSize = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-            )
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                minBufferSize * 2,
-            )
-            audioRecord?.startRecording()
             isSpotting = true
+            // P1-6 audit fix: load ONNX model and configure AudioRecord on background thread to prevent ANR
+            recordingThread = thread(start = true) {
+                try {
+                    if (kws == null) {
+                        kws = loadKeywordSpotter()
+                    }
+                    val spotter = kws
+                    if (spotter == null) {
+                        isSpotting = false
+                        return@thread
+                    }
+                    stream = spotter.createStream(tokens)
+                    if (stream?.ptr == 0L) {
+                        android.util.Log.e("VoiceAssistant", "Failed to create KWS stream for $name")
+                        isSpotting = false
+                        return@thread
+                    }
 
-            recordingThread = thread(start = true) { processSamples(name) }
+                    val minBufferSize = AudioRecord.getMinBufferSize(
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                    )
+                    audioRecord = AudioRecord(
+                        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        minBufferSize * 2,
+                    )
+                    audioRecord?.startRecording()
+
+                    processSamples(name)
+                } catch (e: Throwable) {
+                    android.util.Log.e("VoiceAssistant", "Background spotting initialization failed", e)
+                    isSpotting = false
+                    releaseAudioResources()
+                }
+            }
         } catch (e: Throwable) {
             android.util.Log.e("VoiceAssistant", "Failed to start KWS loop", e)
             stopSpotting()
@@ -313,9 +327,15 @@ class VoiceAssistantForegroundService : Service() {
      * native resources in its `finally` block instead. */
     private fun stopSpotting() {
         isSpotting = false
-        recordingThread?.join(500)
-        recordingThread = null
-        releaseAudioResources()
+        val thread = recordingThread
+        if (thread != null) {
+            thread.join(500)
+            recordingThread = null
+            // processSamples() `finally` handles release on the thread
+        } else {
+            // If the thread never started (e.g. initialization failure), clean up directly
+            releaseAudioResources()
+        }
     }
 
     private fun buildNotification(): android.app.Notification {

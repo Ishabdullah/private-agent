@@ -49,6 +49,10 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Analyze code
+        # P5-3 audit fix: enforce lints in CI
+        run: flutter analyze
+
       - name: Run tests
         run: flutter test
 
@@ -72,18 +76,19 @@ jobs:
           name: private-agent-android
           path: dist/*
 
-      # Publish / update a rolling "latest" GitHub Release so the APK
-      # is directly downloadable without logging into GitHub.
-      - name: Publish to GitHub Release (latest build)
+      # Publish / update GitHub Release
+      # P5-1 audit fix: use dynamic tag name so version tags (e.g. v1.2.0) create proper releases
+      - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-build
-          name: "Latest Build"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest-build' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'Latest Build' }}
           body: |
-            Automatically built from the latest commit on `main`.
+            Automatically built release.
             Download **app-arm64-v8a-release.apk** for most modern Android phones.
-          prerelease: true
-          files: dist/*.apk
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          # P5-2 audit fix: include SHA256SUMS.txt and all dist files in release
+          files: dist/*
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Clean up signing key

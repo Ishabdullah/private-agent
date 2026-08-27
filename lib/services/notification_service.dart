@@ -6,6 +6,8 @@ class NotificationService {
 
   bool _initialized = false;
   bool? _notificationsAllowed;
+  // P2-11 audit fix: guard concurrent permission requests with shared in-flight Future
+  Future<bool>? _permissionFuture;
   int _nextNotificationId = 1000;
 
   Future<void> init() async {
@@ -24,14 +26,23 @@ class NotificationService {
   Future<bool> requestPermission() async {
     if (!_initialized) await init();
     if (_notificationsAllowed != null) return _notificationsAllowed!;
+    if (_permissionFuture != null) return _permissionFuture!;
 
-    final android = _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    final granted = await android?.requestNotificationsPermission();
-    _notificationsAllowed = granted ?? true;
-    return _notificationsAllowed!;
+    _permissionFuture = () async {
+      try {
+        final android = _notificationsPlugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+        final granted = await android?.requestNotificationsPermission();
+        _notificationsAllowed = granted ?? true;
+        return _notificationsAllowed!;
+      } finally {
+        _permissionFuture = null;
+      }
+    }();
+
+    return _permissionFuture!;
   }
 
   Future<void> showTaskCompleteNotification(String title, String body) async {

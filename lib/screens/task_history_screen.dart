@@ -22,13 +22,30 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
 
   Future<void> _loadHistory() async {
     setState(() => _isLoading = true);
-    final history = await TaskHistoryLogger.readHistory();
-    final analytics = await TaskHistoryLogger.getAnalytics();
-    setState(() {
-      _history = history;
-      _analytics = analytics;
-      _isLoading = false;
-    });
+    try {
+      final history = await TaskHistoryLogger.readHistory();
+      final analytics = await TaskHistoryLogger.getAnalytics();
+      if (mounted) {
+        setState(() {
+          _history = history;
+          _analytics = analytics;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _history = [];
+          _analytics = {};
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading history: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   Future<void> _clearHistory() async {

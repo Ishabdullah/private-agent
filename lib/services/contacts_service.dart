@@ -28,8 +28,9 @@ class ContactsService {
       throw ContactsPermissionDeniedException();
     }
 
+    // P1-1 audit fix: use withProperties: false to avoid loading full contact database into RAM
     final contacts = await FlutterContacts.getContacts(
-      withProperties: true,
+      withProperties: false,
       withPhoto: false,
     );
 
@@ -44,8 +45,10 @@ class ContactsService {
     final matches = await searchContacts(contactName);
     if (matches.isEmpty) return null;
 
-    final contact = matches.first;
-    if (contact.phones.isEmpty) return null;
+    final match = matches.first;
+    // P1-1 audit fix: fetch full contact on demand
+    final contact = await FlutterContacts.getContact(match.id, withProperties: true);
+    if (contact == null || contact.phones.isEmpty) return null;
 
     return contact.phones.first.number;
   }
@@ -65,7 +68,9 @@ class ContactsService {
     }
 
     final buffer = StringBuffer('Found ${contacts.length} contact(s):\n');
-    for (final contact in contacts.take(5)) {
+    for (var contact in contacts.take(5)) {
+      // P1-1 audit fix: fetch full details for top 5 matches
+      contact = await FlutterContacts.getContact(contact.id, withProperties: true) ?? contact;
       buffer.write('• ${contact.displayName}');
       if (contact.phones.isNotEmpty) {
         buffer.write(' - ${contact.phones.first.number}');

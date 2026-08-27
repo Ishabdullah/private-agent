@@ -96,26 +96,38 @@ class MainActivity : FlutterActivity() {
         channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "startListening" -> {
-                        val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
-                            .setAction(VoiceAssistantForegroundService.ACTION_START)
-                        androidx.core.content.ContextCompat.startForegroundService(activity, intent)
-                        result.success(true)
+                        // P1-5 audit fix: catch ForegroundServiceStartNotAllowedException on Android 12+
+                        try {
+                            val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
+                                .setAction(VoiceAssistantForegroundService.ACTION_START)
+                            androidx.core.content.ContextCompat.startForegroundService(activity, intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "Failed to start VoiceAssistantForegroundService", e)
+                            result.error("SERVICE_START_FAILED", e.message, null)
+                        }
                     }
 
                     "stopListening" -> {
+                        // P1-4 audit fix: use stopService instead of startService to avoid background crashes on Android 8+
                         val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
-                            .setAction(VoiceAssistantForegroundService.ACTION_STOP)
-                        activity.startService(intent)
+                        activity.stopService(intent)
                         result.success(true)
                     }
 
                     "isListening" -> result.success(VoiceAssistantForegroundService.isRunning)
 
                     "resumeListening" -> {
-                        val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
-                            .setAction(VoiceAssistantForegroundService.ACTION_START)
-                        androidx.core.content.ContextCompat.startForegroundService(activity, intent)
-                        result.success(true)
+                        // P1-5 audit fix: catch ForegroundServiceStartNotAllowedException on Android 12+
+                        try {
+                            val intent = Intent(activity, VoiceAssistantForegroundService::class.java)
+                                .setAction(VoiceAssistantForegroundService.ACTION_START)
+                            androidx.core.content.ContextCompat.startForegroundService(activity, intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "Failed to resume VoiceAssistantForegroundService", e)
+                            result.error("SERVICE_RESUME_FAILED", e.message, null)
+                        }
                     }
 
                     else -> result.notImplemented()
@@ -154,14 +166,13 @@ class MainActivity : FlutterActivity() {
                             result.success(keyguardManager?.isKeyguardLocked ?: false)
                         }
 
+                        // P2-3 audit fix: return true for overlay permission checks since floating overlay feature
+                        // is disabled (FeatureFlags.floatingOverlayEnabled = false) and permission is stripped.
                         "checkOverlayPermission" -> {
-                            result.success(Settings.canDrawOverlays(context))
+                            result.success(true)
                         }
 
                         "requestOverlayPermission" -> {
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(intent)
                             result.success(true)
                         }
 

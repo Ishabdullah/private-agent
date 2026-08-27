@@ -90,30 +90,35 @@ class ActionHandler {
           break;
 
         case 'set_alarm':
+          // P2-9 audit fix: validate hour and minute ranges
+          final hour = ((action.params['hour'] as num?)?.toInt() ?? 0).clamp(0, 23);
+          final minute = ((action.params['minute'] as num?)?.toInt() ?? 0).clamp(0, 59);
           result = await _alarm.setAlarm(
-            hour: (action.params['hour'] as num?)?.toInt() ?? 0,
-            minute: (action.params['minute'] as num?)?.toInt() ?? 0,
+            hour: hour,
+            minute: minute,
             label: action.params['label'] as String?,
           );
           break;
 
         case 'set_timer':
+          // P2-9 audit fix: ensure non-negative timer duration
+          final seconds = ((action.params['seconds'] as num?)?.toInt() ?? 60).clamp(1, 86400);
           result = await _alarm.setTimer(
-            seconds: (action.params['seconds'] as num?)?.toInt() ?? 60,
+            seconds: seconds,
             label: action.params['label'] as String?,
           );
           break;
 
         case 'set_volume':
-          result = await _systemControl.setVolume(
-            (action.params['level'] as num?)?.toInt() ?? 50,
-          );
+          // P2-9 audit fix: clamp volume to 0..100
+          final volLevel = ((action.params['level'] as num?)?.toInt() ?? 50).clamp(0, 100);
+          result = await _systemControl.setVolume(volLevel);
           break;
 
         case 'set_brightness':
-          result = await _systemControl.setBrightness(
-            (action.params['level'] as num?)?.toInt() ?? 50,
-          );
+          // P2-9 audit fix: clamp brightness to 0..100
+          final brightLevel = ((action.params['level'] as num?)?.toInt() ?? 50).clamp(0, 100);
+          result = await _systemControl.setBrightness(brightLevel);
           break;
 
         case 'run_adb_command':

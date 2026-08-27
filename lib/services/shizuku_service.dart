@@ -66,13 +66,25 @@ class ShizukuService {
     );
   }
 
+  /// Validates that [packageName] looks like a real Android package name
+  /// (only letters, digits, dots, and underscores). Rejects anything else
+  /// to prevent shell command injection — Shizuku runs with elevated
+  /// privileges (ADB/root). (P0-2 audit fix)
+  static final RegExp _validPackageName = RegExp(r'^[a-zA-Z0-9._]+$');
+
   /// Force stop an app
   Future<String> forceStopApp(String packageName) async {
+    if (!_validPackageName.hasMatch(packageName)) {
+      return 'Invalid package name: $packageName';
+    }
     return runCommand('am force-stop $packageName');
   }
 
   /// Clear app data
   Future<String> clearAppData(String packageName) async {
+    if (!_validPackageName.hasMatch(packageName)) {
+      return 'Invalid package name: $packageName';
+    }
     return runCommand('pm clear $packageName');
   }
 }

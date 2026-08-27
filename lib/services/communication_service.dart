@@ -27,8 +27,8 @@ class CommunicationService {
 
     try {
       final uri = Uri(scheme: 'tel', path: number);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+      // P2-8 audit fix: check launchUrl result directly without relying on canLaunchUrl
+      if (await launchUrl(uri)) {
         return 'Calling $number${contactName != null ? ' ($contactName)' : ''}...';
       }
       return 'Cannot make calls on this device.';
@@ -67,8 +67,8 @@ class CommunicationService {
         path: number,
         queryParameters: {'body': message},
       );
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+      // P2-8 audit fix: check launchUrl result directly
+      if (await launchUrl(uri)) {
         return 'Opening SMS to $number${contactName != null ? ' ($contactName)' : ''} with message: "$message"';
       }
       return 'Cannot send SMS on this device.';
@@ -92,8 +92,8 @@ class CommunicationService {
           if (body != null) 'body': body,
         },
       );
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+      // P2-8 audit fix: check launchUrl result directly
+      if (await launchUrl(uri)) {
         return 'Opening email to $to';
       }
       return 'Cannot send email on this device.';

@@ -24,9 +24,9 @@ void overlayMain() {
         primaryColor: const Color(0xFF4F46E5),
         useMaterial3: true,
         colorScheme: const ColorScheme.light(
-          background: Colors.transparent,
+          // P3-5 audit fix: replaced deprecated background with surface
+          surface: Colors.transparent,
           primary: Color(0xFF4F46E5),
-          surface: Colors.white,
           onSurface: Color(0xFF1E293B),
           onPrimary: Colors.white,
         ),
@@ -169,8 +169,8 @@ class PrivateAgentApp extends StatelessWidget {
               color: const Color(0xFF151D30),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
-                side: BorderSide(
-                  color: const Color(0xFF243049).withOpacity(0.4),
+                side: const BorderSide(
+                  color: Color(0x66243049),
                   width: 1.2,
                 ),
               ),

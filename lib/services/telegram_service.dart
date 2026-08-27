@@ -20,6 +20,8 @@ class TelegramService {
   bool _isPolling = false;
   Timer? _pollingTimer;
   int _consecutiveFailures = 0;
+  // P1-3 audit fix: manage shared http client to cancel pending long polls
+  http.Client? _httpClient;
 
   TelegramService(this._actionHandler, this._aiService);
 
@@ -57,12 +59,15 @@ class TelegramService {
   void startPolling() {
     if (_isPolling) return;
     _isPolling = true;
+    _httpClient = http.Client();
     _pollUpdates();
   }
 
   void stopPolling() {
     _isPolling = false;
     _pollingTimer?.cancel();
+    _httpClient?.close();
+    _httpClient = null;
   }
 
   Future<void> _pollUpdates() async {
@@ -70,7 +75,8 @@ class TelegramService {
 
     try {
       final url = Uri.parse('https://api.telegram.org/bot$_botToken/getUpdates');
-      final response = await http.post(
+      final client = _httpClient ?? http.Client();
+      final response = await client.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({

@@ -357,6 +357,25 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
       String response;
       try {
         _cancelCompleter = Completer<void>();
+        // P2-1 audit fix: immediately abort if already cancelled to avoid dispatching an unnecessary AI network request
+        if (_cancelled) {
+          _cancelCompleter!.complete();
+          results.add('Task cancelled by user.');
+          _report('Task cancelled.');
+          await _notificationService.showTaskCompleteNotification(
+            'Task Cancelled',
+            'Task was stopped by the user.',
+          );
+          await TaskHistoryLogger.logTask(
+            userGoal,
+            'Cancelled',
+            totalTokens,
+            step,
+            results,
+          );
+          await _screenService.showToast('Task Cancelled');
+          return 'Task cancelled.';
+        }
         final aiFuture = _aiService.sendTaskMessage(_taskSystemPrompt, prompt);
 
         // Race: whichever finishes first wins
@@ -549,7 +568,14 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
           final description = action == 'click_text'
               ? 'Tap "$tapLabel"?'
               : (reasoning.isNotEmpty ? reasoning : 'Perform this action?');
-          final proceed = await onConfirmRiskyTap!(description);
+          // P3-2 audit fix: race risky tap confirmation against cancel signal
+          final confirmFuture = onConfirmRiskyTap!(description);
+          final proceedResult = await Future.any([
+            confirmFuture.then((r) => r),
+            if (_cancelCompleter != null)
+              _cancelCompleter!.future.then((_) => false),
+          ]);
+          final proceed = proceedResult ?? false;
           if (_cancelled) return 'Task cancelled.';
           if (!proceed) {
             results.add(

@@ -177,6 +177,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _messages.add(assistantMessage);
     });
     final assistantIndex = _messages.length - 1;
+    bool placeholderRemoved = false;
 
     try {
       final isAgent = _mode == 'agent';
@@ -214,6 +215,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       if (action != null) {
         // If it's an action, we remove the raw JSON message from display
+        placeholderRemoved = true;
         setState(() {
           _messages.removeAt(assistantIndex);
         });
@@ -277,7 +279,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) {
         setState(() {
-          if (_messages.isNotEmpty && _messages.length > assistantIndex) {
+          // P2-5 audit fix: only remove placeholder if it was not already removed
+          if (!placeholderRemoved && _messages.isNotEmpty && _messages.length > assistantIndex) {
             _messages.removeAt(assistantIndex);
           }
           _messages.add(
@@ -449,6 +452,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    // P2-4 audit fix: null out global callbacks to prevent memory leaks and setState after dispose
+    onOverlayTask = null;
+    VoiceAssistantForegroundService.onWakeWordDetected = null;
+    VoiceAssistantForegroundService.onAssistantGestureInvoked = null;
+
     WidgetsBinding.instance.removeObserver(this);
     _overlayHistoryTimer?.cancel();
     _textController.dispose();
@@ -652,12 +660,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           // Background mesh glows
           _buildBackgroundGlows(isDark),
 
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
-              child: Container(color: Colors.transparent),
-            ),
-          ),
+          // P1-8 audit fix: removed full-screen BackdropFilter (sigma 100) to save GPU rendering performance
 
           Column(
             children: [

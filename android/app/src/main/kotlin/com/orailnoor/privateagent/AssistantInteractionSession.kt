@@ -76,10 +76,16 @@ class AssistantInteractionSession(context: Context) : VoiceInteractionSession(co
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        val intent = Intent(context, MainActivity::class.java)
-            .setAction(ACTION_ASSISTANT_INTERACTION)
-            .putExtra(EXTRA_ASSISTANT_NAME, readConfiguredAssistantName())
-        startVoiceActivity(intent)
+        // P2-13 audit fix: wrap startVoiceActivity in try-catch to avoid crash if intent resolution fails
+        try {
+            val intent = Intent(context, MainActivity::class.java)
+                .setAction(ACTION_ASSISTANT_INTERACTION)
+                .putExtra(EXTRA_ASSISTANT_NAME, readConfiguredAssistantName())
+            startVoiceActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("AssistantInteraction", "Failed to start voice activity", e)
+            hide()
+        }
     }
 
     /** Same `flutter.wake_word_config` prefs blob

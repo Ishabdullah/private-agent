@@ -131,7 +131,9 @@
                 android:resource="@xml/recognition_service" />
         </service>
 
-        <receiver android:name=".BackgroundEngineReceiver" android:exported="true">
+        <!-- P0-7 audit fix: was exported="true", allowing any app to trigger
+             internal Flutter engine channel registration. Internal-only. -->
+        <receiver android:name=".BackgroundEngineReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="com.orailnoor.privateagent.REGISTER_BACKGROUND_CHANNELS" />
             </intent-filter>

@@ -41,9 +41,13 @@ class SkillMemoryService {
     }
   }
 
+  // P1-2 audit fix: Write lock to serialize disk writes
+  Future<void> _writeLock = Future.value();
+
   List<String> _extractKeywords(String text) {
     final stopWords = {'to', 'and', 'the', 'a', 'in', 'of', 'for', 'on', 'with', 'at', 'by', 'from', 'go', 'turn', 'open'};
-    final words = text.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\s]'), '').split(RegExp(r'\s+'));
+    // P1-9 audit fix: use unicode-aware regex to preserve non-ASCII language characters
+    final words = text.toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), '').split(RegExp(r'\s+'));
     return words.where((w) => w.isNotEmpty && !stopWords.contains(w)).toList();
   }
 
@@ -78,42 +82,48 @@ class SkillMemoryService {
     return null;
   }
 
-  Future<void> saveSkill(String taskGoal, List<ActionStep> steps) async {
-    await _loadSkills();
-    
-    final queryKeywords = _extractKeywords(taskGoal);
-    for (final skill in _skills) {
-      if (_jaccardSimilarity(queryKeywords, skill.taskKeywords) > 0.8) {
-        skill.successCount++;
-        skill.lastUsed = DateTime.now();
-        if (steps.length < skill.steps.length) {
-          skill.steps.clear();
-          skill.steps.addAll(steps);
+  Future<void> saveSkill(String taskGoal, List<ActionStep> steps) {
+    _writeLock = _writeLock.then((_) async {
+      await _loadSkills();
+      
+      final queryKeywords = _extractKeywords(taskGoal);
+      for (final skill in _skills) {
+        if (_jaccardSimilarity(queryKeywords, skill.taskKeywords) > 0.8) {
+          skill.successCount++;
+          skill.lastUsed = DateTime.now();
+          if (steps.length < skill.steps.length) {
+            skill.steps.clear();
+            skill.steps.addAll(steps);
+          }
+          await _saveAllSkills();
+          return;
         }
-        await _saveAllSkills();
-        return;
       }
-    }
 
-    final newSkill = SavedSkill(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      task: taskGoal,
-      taskKeywords: queryKeywords,
-      successCount: 1,
-      failCount: 0,
-      lastUsed: DateTime.now(),
-      steps: steps,
-    );
-    _skills.add(newSkill);
-    await _saveAllSkills();
+      final newSkill = SavedSkill(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        task: taskGoal,
+        taskKeywords: queryKeywords,
+        successCount: 1,
+        failCount: 0,
+        lastUsed: DateTime.now(),
+        steps: steps,
+      );
+      _skills.add(newSkill);
+      await _saveAllSkills();
+    }).catchError((_) {});
+    return _writeLock;
   }
 
-  Future<void> recordFailure(String skillId) async {
-    await _loadSkills();
-    final index = _skills.indexWhere((s) => s.id == skillId);
-    if (index != -1) {
-      _skills[index].failCount++;
-      await _saveAllSkills();
-    }
+  Future<void> recordFailure(String skillId) {
+    _writeLock = _writeLock.then((_) async {
+      await _loadSkills();
+      final index = _skills.indexWhere((s) => s.id == skillId);
+      if (index != -1) {
+        _skills[index].failCount++;
+        await _saveAllSkills();
+      }
+    }).catchError((_) {});
+    return _writeLock;
   }
 }

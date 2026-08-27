@@ -247,6 +247,10 @@ class _SettingsScreenState extends State<SettingsScreen>
         _checkOverlayStatus();
       }
       _checkAssistantRoleStatus();
+      // P3-8 audit fix: auto-refresh Shizuku status on app resume
+      widget.shizukuService.checkAvailability().then((_) {
+        if (mounted) setState(() {});
+      });
     }
   }
 
@@ -314,17 +318,34 @@ class _SettingsScreenState extends State<SettingsScreen>
       return;
     }
 
-    // Show loading
+    // P0-4 audit fix: ensure the non-dismissible loading dialog is always popped
+    // safely in a finally block without popping the outer screen.
+    List<String> models = [];
+    bool dialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => const PopScope(
+        canPop: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
     );
 
-    final models = await widget.aiService.fetchAvailableModels(baseUrl, apiKey);
-
-    // Hide loading
-    if (mounted) Navigator.pop(context);
+    try {
+      models = await widget.aiService.fetchAvailableModels(baseUrl, apiKey);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error fetching models: $e')),
+        );
+      }
+      return;
+    } finally {
+      if (mounted && dialogOpen) {
+        dialogOpen = false;
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
 
     if (models.isEmpty) {
       if (mounted) {

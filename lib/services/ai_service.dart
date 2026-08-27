@@ -290,11 +290,20 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
     _conversationHistory.clear();
   }
 
-  void addHistoryMessage(String role, String content) {
-    _conversationHistory.add({'role': role, 'content': content});
+  void _trimHistory() {
+    // P1-11 audit fix: ensure truncated history does not start with an orphan 'assistant' message
     if (_conversationHistory.length > 20) {
       _conversationHistory.removeRange(0, _conversationHistory.length - 20);
     }
+    while (_conversationHistory.isNotEmpty &&
+        _conversationHistory.first['role'] == 'assistant') {
+      _conversationHistory.removeAt(0);
+    }
+  }
+
+  void addHistoryMessage(String role, String content) {
+    _conversationHistory.add({'role': role, 'content': content});
+    _trimHistory();
   }
 
   /// Send a message to the AI and get a response.
@@ -305,11 +314,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
 
     // Add ONLY the text to the persistent conversation history to save tokens.
     _conversationHistory.add({'role': 'user', 'content': message});
-
-    // Keep conversation history manageable (last 20 messages)
-    if (_conversationHistory.length > 20) {
-      _conversationHistory.removeRange(0, _conversationHistory.length - 20);
-    }
+    _trimHistory();
 
     try {
       // Build the prompt including system instructions
@@ -433,10 +438,7 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
     }
 
     _conversationHistory.add({'role': 'user', 'content': message});
-
-    if (_conversationHistory.length > 20) {
-      _conversationHistory.removeRange(0, _conversationHistory.length - 20);
-    }
+    _trimHistory();
 
     try {
       final systemPrompt = (isAgentMode ? _systemPrompt : _chatSystemPrompt) +
@@ -458,115 +460,120 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
       }
 
       final client = http.Client();
-      final request = http.Request('POST', Uri.parse(requestUrl));
-      request.headers.addAll({
-        'Content-Type': 'application/json',
-        ..._authHeader,
-        'HTTP-Referer': 'https://github.com/orailnoor/private-agent',
-        'X-Title': 'PrivateAgent',
-      });
+      try {
+        final request = http.Request('POST', Uri.parse(requestUrl));
+        request.headers.addAll({
+          'Content-Type': 'application/json',
+          ..._authHeader,
+          'HTTP-Referer': 'https://github.com/orailnoor/private-agent',
+          'X-Title': 'PrivateAgent',
+        });
 
-      request.body = jsonEncode({
-        'model': _model,
-        'messages': messages,
-        'temperature': _temperature,
-        'max_tokens': _effectiveMaxTokens,
-        'stream': true,
-        ..._extraRequestFields,
-      });
+        request.body = jsonEncode({
+          'model': _model,
+          'messages': messages,
+          'temperature': _temperature,
+          'max_tokens': _effectiveMaxTokens,
+          'stream': true,
+          ..._extraRequestFields,
+        });
 
-      final response = await client
-          .send(request)
-          .timeout(const Duration(minutes: 30));
+        final response = await client
+            .send(request)
+            .timeout(const Duration(minutes: 30));
 
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        String errorMessage = body;
-        try {
-          final decoded = jsonDecode(body);
-          if (decoded is Map<String, dynamic>) {
-            if (decoded['error'] is Map<String, dynamic>) {
-              errorMessage = decoded['error']['message']?.toString() ?? body;
-            } else if (decoded['error'] is String) {
-              errorMessage = decoded['error'];
-            }
-          }
-        } catch (_) {}
-        client.close();
-        throw Exception('API error (${response.statusCode}): $errorMessage');
-      }
-
-      final accumulatedContent = StringBuffer();
-      bool inThinkBlock = false;
-
-      // Listen to response stream
-      final lineStream = response.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-
-      await for (final line in lineStream) {
-        final trimmedLine = line.trim();
-        if (trimmedLine.isEmpty) continue;
-        if (trimmedLine.startsWith('data:')) {
-          final dataStr = trimmedLine.substring(5).trim();
-          if (dataStr == '[DONE]') break;
+        if (response.statusCode != 200) {
+          final body = await response.stream.bytesToString();
+          String errorMessage = body;
           try {
-            final json = jsonDecode(dataStr);
-            if (json is Map && json['choices'] is List) {
-              final choices = json['choices'] as List;
-              if (choices.isNotEmpty) {
-                final choice = choices[0];
-                if (choice is! Map) continue;
-                final rawDelta = choice['delta'];
-                final delta = rawDelta is Map ? rawDelta : const {};
-                final rawContent = delta['content'];
-                if (rawContent is String && rawContent.isNotEmpty) {
-                  final content = rawContent;
-                  accumulatedContent.write(content);
-
-                  // Handle <think> block stripping on the fly for better stream styling
-                  if (content.contains('<think>')) {
-                    inThinkBlock = true;
-                    // If there is text before <think>, yield it
-                    final parts = content.split('<think>');
-                    if (parts[0].isNotEmpty) {
-                      yield parts[0];
-                    }
-                  } else if (content.contains('</think>')) {
-                    inThinkBlock = false;
-                    // If there is text after </think>, yield it
-                    final parts = content.split('</think>');
-                    if (parts.length > 1 && parts[1].isNotEmpty) {
-                      yield parts[1];
-                    }
-                  } else if (!inThinkBlock) {
-                    yield content;
-                  }
-                }
-                if (choice['finish_reason'] != null) break;
+            final decoded = jsonDecode(body);
+            if (decoded is Map<String, dynamic>) {
+              if (decoded['error'] is Map<String, dynamic>) {
+                errorMessage = decoded['error']['message']?.toString() ?? body;
+              } else if (decoded['error'] is String) {
+                errorMessage = decoded['error'];
               }
             }
-          } catch (_) {
-            // Ignore incomplete chunks
+          } catch (_) {}
+          throw Exception('API error (${response.statusCode}): $errorMessage');
+        }
+
+        final accumulatedContent = StringBuffer();
+        bool inThinkBlock = false;
+
+        // Listen to response stream
+        final lineStream = response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter());
+
+        await for (final line in lineStream) {
+          final trimmedLine = line.trim();
+          if (trimmedLine.isEmpty) continue;
+          if (trimmedLine.startsWith('data:')) {
+            final dataStr = trimmedLine.substring(5).trim();
+            if (dataStr == '[DONE]') break;
+            try {
+              final json = jsonDecode(dataStr);
+              if (json is Map && json['choices'] is List) {
+                final choices = json['choices'] as List;
+                if (choices.isNotEmpty) {
+                  final choice = choices[0];
+                  if (choice is! Map) continue;
+                  final rawDelta = choice['delta'];
+                  final delta = rawDelta is Map ? rawDelta : const {};
+                  final rawContent = delta['content'];
+                  if (rawContent is String && rawContent.isNotEmpty) {
+                    final content = rawContent;
+                    accumulatedContent.write(content);
+
+                    // Handle <think> block stripping on the fly for better stream styling
+                    if (content.contains('<think>')) {
+                      inThinkBlock = true;
+                      // If there is text before <think>, yield it
+                      final parts = content.split('<think>');
+                      if (parts[0].isNotEmpty) {
+                        yield parts[0];
+                      }
+                    } else if (content.contains('</think>')) {
+                      inThinkBlock = false;
+                      // If there is text after </think>, yield it
+                      final parts = content.split('</think>');
+                      if (parts.length > 1 && parts[1].isNotEmpty) {
+                        yield parts[1];
+                      }
+                    } else if (!inThinkBlock) {
+                      yield content;
+                    }
+                  }
+                  if (choice['finish_reason'] != null) break;
+                }
+              }
+            } catch (_) {
+              // Ignore incomplete chunks
+            }
           }
         }
+
+        // Clean up final accumulated response and add to history
+        String finalResponse = accumulatedContent.toString().trim();
+        finalResponse = finalResponse
+            .replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '')
+            .trim();
+
+        if (finalResponse.isEmpty) {
+          throw Exception(
+            'The model finished without a visible answer. Increase Max Tokens '
+            'or try another NVIDIA model.',
+          );
+        }
+        _conversationHistory.add({'role': 'assistant', 'content': finalResponse});
+      } finally {
+        // P0-3 audit fix: always close the HTTP client, even on stream errors.
+        // Previously client.close() was only on the success path — a dropped
+        // connection or UTF-8 decode error during streaming would skip it,
+        // leaking the socket.
+        client.close();
       }
-
-      client.close();
-
-      // Clean up final accumulated response and add to history
-      String finalResponse = accumulatedContent.toString().trim();
-      finalResponse = finalResponse
-          .replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '')
-          .trim();
-
-      if (finalResponse.isEmpty) {
-        throw Exception(
-          'The model finished without a visible answer. Increase Max Tokens '
-          'or try another NVIDIA model.',
-        );
-      }
-      _conversationHistory.add({'role': 'assistant', 'content': finalResponse});
     } catch (e) {
       if (e is Exception) rethrow;
       throw Exception('Network error: $e');
@@ -660,6 +667,16 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
         }
         return AiResponse(content, tokens);
       } catch (e) {
+        // P2-2 audit fix: fail fast on 4xx client errors (except 429 Too Many Requests)
+        if (e is Exception) {
+          final match = RegExp(r'API error \((\d+)\)').firstMatch(e.toString());
+          if (match != null) {
+            final code = int.tryParse(match.group(1)!) ?? 0;
+            if (code >= 400 && code < 500 && code != 429) {
+              rethrow;
+            }
+          }
+        }
         if (currentTry > maxRetries) {
           if (e is Exception) rethrow;
           throw Exception('Network error after $maxRetries retries: $e');
@@ -774,7 +791,10 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
 
       final response = await http.get(
         Uri.parse('$cleanBaseUrl/models'),
-        headers: {'Authorization': 'Bearer $apiKey'},
+        // P3-4 audit fix: send authorization header only when apiKey is provided
+        headers: {
+          if (apiKey.trim().isNotEmpty) 'Authorization': 'Bearer $apiKey',
+        },
       );
 
       if (response.statusCode == 200) {
@@ -797,7 +817,8 @@ VOICE RESPONSE STYLE: This request came from a spoken voice command and whatever
       }
       return [];
     } catch (e) {
-      print('Error fetching models: $e');
+      // P3-3 audit fix: use developer.log instead of print in production code
+      developer.log('Error fetching models: $e', name: 'PrivateAgent');
       return [];
     }
   }

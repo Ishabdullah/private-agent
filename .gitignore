@@ -55,3 +55,9 @@ google-services.json
 
 # Local credentials bundled only into developer test builds
 /assets/local_config/ai_test_config.json
+
+# Signing keystores and key configs (P0-6 audit fix)
+*.jks
+*.keystore
+key.properties
+.env*

@@ -27,6 +27,8 @@ class AssistantPassthroughRecognitionService : RecognitionService() {
     private var delegate: SpeechRecognizer? = null
 
     override fun onStartListening(recognizerIntent: Intent, listener: Callback) {
+        // P1-12 audit fix: destroy existing delegate to avoid leaking SpeechRecognizer instances
+        delegate?.destroy()
         val target = findDelegateComponent()
         if (target == null) {
             runCatching { listener.error(SpeechRecognizer.ERROR_RECOGNIZER_BUSY) }

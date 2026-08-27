@@ -4,16 +4,25 @@ import 'package:url_launcher/url_launcher.dart';
 
 class AppLauncherService {
   List<AppInfo>? _cachedApps;
+  // P1-10 audit fix: TTL cache invalidation so newly installed apps can be discovered
+  DateTime? _cacheTime;
 
-  /// Get all installed apps (cached), including system apps!
+  /// Get all installed apps (cached with 1-hour TTL), including system apps!
   Future<List<AppInfo>> getInstalledApps() async {
-    _cachedApps ??= await InstalledApps.getInstalledApps(false, false);
+    if (_cachedApps != null &&
+        _cacheTime != null &&
+        DateTime.now().difference(_cacheTime!).inHours < 1) {
+      return _cachedApps!;
+    }
+    _cachedApps = await InstalledApps.getInstalledApps(false, false);
+    _cacheTime = DateTime.now();
     return _cachedApps!;
   }
 
   /// Clear app cache
   void clearCache() {
     _cachedApps = null;
+    _cacheTime = null;
   }
 
   /// Find apps matching a query
