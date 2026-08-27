@@ -11,8 +11,7 @@ class SystemControlService {
   Future<String> setVolume(int level) async {
     try {
       final volume = (level / 100).clamp(0.0, 1.0);
-      // P2-7 audit fix: await async setVolume call
-      await VolumeController().setVolume(volume);
+      VolumeController().setVolume(volume);
       return 'Volume set to $level%';
     } catch (e) {
       return 'Error setting volume: $e';

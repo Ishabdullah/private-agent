@@ -570,12 +570,11 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
               : (reasoning.isNotEmpty ? reasoning : 'Perform this action?');
           // P3-2 audit fix: race risky tap confirmation against cancel signal
           final confirmFuture = onConfirmRiskyTap!(description);
-          final proceedResult = await Future.any([
-            confirmFuture.then((r) => r),
+          final proceed = await Future.any<bool>([
+            confirmFuture,
             if (_cancelCompleter != null)
               _cancelCompleter!.future.then((_) => false),
           ]);
-          final proceed = proceedResult ?? false;
           if (_cancelled) return 'Task cancelled.';
           if (!proceed) {
             results.add(
